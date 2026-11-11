@@ -545,6 +545,19 @@ export function mountWorkspaceVirtualGroups(ctx: {
     return header
   }
 
+  /** Give group action buttons the exact native icon-button class. */
+  function applyNativeIconClasses(): void {
+    const rowAction = document.querySelector<HTMLButtonElement>('[data-row-key^="workspace:"] [data-context-menu-trigger]')
+    const nativeClass = rowAction?.className ?? officialAddButton()?.className ?? ''
+    if (nativeClass === '') return
+    const classes = nativeClass.split(/\s+/).filter(Boolean)
+    document.querySelectorAll<HTMLButtonElement>('.wvg-more').forEach((button) => {
+      if (button.dataset.wvgNativeIcon === '1') return
+      button.classList.add(...classes)
+      button.dataset.wvgNativeIcon = '1'
+    })
+  }
+
   /** Apply grouping: headers, order, collapse and the new-group button. */
   function reconcile(): void {
     if (disposed) return
@@ -631,6 +644,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       header.remove()
       groupedHeaders.delete(key)
     }
+    applyNativeIconClasses()
   }
 
   function toggleGroup(key: string): void {
@@ -779,6 +793,12 @@ export function mountWorkspaceVirtualGroups(ctx: {
     return run
   }
 
+  function requestDeleteGroup(key: string): void {
+    openConfirmDialog('删除分组', `删除后，该分组内的项目会移到「${DEFAULT_GROUP}」。`, async () => {
+      await deleteGroup(key)
+    })
+  }
+
   /** Menu row matching DSH's context-menu item (16px icon + 13px label). */
   function menuItem(label: string, icon: string, danger = false): HTMLButtonElement {
     const button = document.createElement('button')
@@ -792,6 +812,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
     closeMenu()
+    anchor.closest<HTMLElement>('.wvg-group')?.classList.add('wvg-menu-open')
     const panel = document.createElement('div')
     panel.className = 'wvg-menu'
     panel.setAttribute('role', 'menu')
@@ -802,9 +823,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
     panel.append(addWorkspace)
     if (key !== DEFAULT_GROUP) {
-      const separator = document.createElement('div')
-      separator.className = 'wvg-menu-separator'
-      separator.setAttribute('role', 'separator')
       const rename = menuItem('重命名分组', 'dsw-icon-edit-outline-regular')
       rename.addEventListener('click', () => {
         closeMenu()
@@ -816,14 +834,15 @@ export function mountWorkspaceVirtualGroups(ctx: {
           return null
         })
       })
+      const separator = document.createElement('div')
+      separator.className = 'wvg-menu-separator'
+      separator.setAttribute('role', 'separator')
       const remove = menuItem('删除分组', 'dsw-icon-trash-outline-regular', true)
       remove.addEventListener('click', () => {
         closeMenu()
-        openConfirmDialog('删除分组', `删除后，该分组内的项目会移到「${DEFAULT_GROUP}」。`, async () => {
-          await deleteGroup(key)
-        })
+        requestDeleteGroup(key)
       })
-      panel.append(separator, rename, remove)
+      panel.append(rename, separator, remove)
     }
     document.body.append(panel)
     const rect = panel.getBoundingClientRect()
@@ -846,6 +865,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   function closeMenu(): void {
+    document.querySelectorAll<HTMLElement>('.wvg-group.wvg-menu-open').forEach((header) => header.classList.remove('wvg-menu-open'))
     if (menuPointerClose !== null) document.removeEventListener('pointerdown', menuPointerClose, true)
     if (menuKeyClose !== null) document.removeEventListener('keydown', menuKeyClose, true)
     menuPointerClose = null
