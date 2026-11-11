@@ -16,6 +16,8 @@ import type { GroupsConfig, ManualGroups } from '../core/types.ts'
 import { DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL } from '../core/types.ts'
 import {
   effectiveCategories,
+  moveAfter,
+  moveBefore,
   originalRuleNameForDisplay,
   resolveCategory,
   takenCategoryNames,
@@ -23,6 +25,7 @@ import {
 import css from './styles.css?inline'
 
 const MIME = 'application/x-dsh-workspace-virtual-groups'
+const GROUP_MIME = 'application/x-dsh-workspace-virtual-group'
 const CONFIG_ROUTE = '/workspace-virtual-groups/config'
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
@@ -156,6 +159,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let modalKeyHandler: ((event: KeyboardEvent) => void) | null = null
   let toastTimer = 0
   let dragId: string | null = null
+  let draggingGroup: string | null = null
   let saveQueue: Promise<void> = Promise.resolve()
   const groupedHeaders = new Map<string, HTMLElement>()
   const workspaceMap = new Map<string, WorkspaceInfo>()
@@ -289,7 +293,25 @@ export function mountWorkspaceVirtualGroups(ctx: {
     header.setAttribute('role', 'treeitem')
     header.setAttribute('aria-expanded', 'true')
     header.setAttribute('aria-label', key)
+    header.draggable = key !== DEFAULT_GROUP
     header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span>${key === DEFAULT_GROUP ? '' : `<button type="button" class="wvg-more" aria-label="分组“${key}”的操作" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`}`
+    header.addEventListener('dragstart', (event) => {
+      if (key === DEFAULT_GROUP) {
+        event.preventDefault()
+        return
+      }
+      if ((event.target as HTMLElement | null)?.closest('.wvg-more') !== null) {
+        event.preventDefault()
+        return
+      }
+      draggingGroup = key
+      try {
+        event.dataTransfer?.setData(GROUP_MIME, key)
+        if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = 'move'
+      } catch { /* synthetic drag */ }
+      header.classList.add('wvg-dragging')
+    })
+    header.addEventListener('dragend', () => { clearDrag() })
     header.addEventListener('click', (event) => {
       if ((event.target as HTMLElement | null)?.closest('.wvg-more') !== null) return
       toggleGroup(key)
@@ -415,10 +437,25 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function clearDrag(): void {
     dragId = null
-    document.querySelectorAll<HTMLElement>('.wvg-group.wvg-drop').forEach((header) => header.classList.remove('wvg-drop'))
+    draggingGroup = null
+    document.querySelectorAll<HTMLElement>('.wvg-group.wvg-dragging, .wvg-group.wvg-drop, .wvg-group.wvg-insert-before, .wvg-group.wvg-insert-after')
+      .forEach((header) => header.classList.remove('wvg-dragging', 'wvg-drop', 'wvg-insert-before', 'wvg-insert-after'))
   }
 
   function onGroupDragOver(event: DragEvent, header: HTMLElement): void {
+    if (draggingGroup !== null) {
+      const key = header.dataset.wvgGroup ?? ''
+      if (key === DEFAULT_GROUP || key === draggingGroup) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'move'
+      const rect = header.getBoundingClientRect()
+      const before = event.clientY < rect.top + rect.height / 2
+      document.querySelectorAll<HTMLElement>('.wvg-group.wvg-insert-before, .wvg-group.wvg-insert-after')
+        .forEach((node) => node.classList.remove('wvg-insert-before', 'wvg-insert-after'))
+      header.classList.add(before ? 'wvg-insert-before' : 'wvg-insert-after')
+      return
+    }
     if (dragId === null) return
     event.preventDefault()
     event.stopPropagation()
@@ -428,10 +465,21 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function onGroupDragLeave(event: DragEvent, header: HTMLElement): void {
     if (event.relatedTarget instanceof Node && header.contains(event.relatedTarget)) return
-    header.classList.remove('wvg-drop')
+    header.classList.remove('wvg-drop', 'wvg-insert-before', 'wvg-insert-after')
   }
 
   function onGroupDrop(event: DragEvent, key: string, header: HTMLElement): void {
+    if (draggingGroup !== null) {
+      if (key === DEFAULT_GROUP || key === draggingGroup) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = header.getBoundingClientRect()
+      const before = event.clientY < rect.top + rect.height / 2
+      const dragged = draggingGroup
+      clearDrag()
+      void reorderGroup(dragged, key, before)
+      return
+    }
     if (dragId === null) return
     event.preventDefault()
     event.stopPropagation()
@@ -443,6 +491,21 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function onDocumentDragStart(event: DragEvent): void { onDragStart(event) }
   function onDocumentDragEnd(): void { clearDrag() }
+
+  async function reorderGroup(draggedKey: string, targetKey: string, before: boolean): Promise<void> {
+    if (draggedKey === targetKey || targetKey === DEFAULT_GROUP) return
+    const order = effectiveCategories(config, manual)
+      .map(entry => entry.key)
+      .filter(key => key !== DEFAULT_GROUP)
+    const categoryOrder = before
+      ? moveBefore(order, draggedKey, targetKey)
+      : moveAfter(order, draggedKey, targetKey)
+    try {
+      await persist({ ...manual, categoryOrder })
+    } catch (reason) {
+      showToast(reason instanceof Error ? reason.message : String(reason))
+    }
+  }
 
   async function moveToGroup(workspaceId: string, key: string): Promise<void> {
     const info = workspaceInfo(workspaceId)

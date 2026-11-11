@@ -7,6 +7,7 @@
 }
 
 .wvg-group {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -84,6 +85,39 @@
 
 .wvg-more:hover {
   background: var(--dsw-bg-hover, rgba(127, 127, 127, 0.16));
+}
+
+.wvg-group[draggable='true'] {
+  cursor: grab;
+}
+
+.wvg-group[draggable='true']:active {
+  cursor: grabbing;
+}
+
+.wvg-group.wvg-dragging {
+  opacity: 0.45;
+}
+
+.wvg-group.wvg-insert-before::before,
+.wvg-group.wvg-insert-after::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--dsw-accent, #4a90d9);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.wvg-group.wvg-insert-before::before {
+  top: -2px;
+}
+
+.wvg-group.wvg-insert-after::after {
+  bottom: -2px;
 }
 
 .wvg-menu {
