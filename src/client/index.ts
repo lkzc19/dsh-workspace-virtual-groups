@@ -7,12 +7,14 @@
  * styles, hover actions, search and keyboard behavior.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only service merge: `ctx.workspaces` (the Workspace controller).
+// Type-only service merges: the Workspace controller and the navigation face
+// that owns the directory picker / session creation.
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { mountWorkspaceVirtualGroups } from './dom-groups.ts'
 
-/** Required service: the Workspace controller snapshot. */
-export const inject = ['workspaces']
+/** Required services: the Workspace controller and its navigation face. */
+export const inject = ['workspaces', 'uiWorkspace']
 
 /** Mount the grouping layer and remove it with the client fiber. */
 export function apply(ctx: ClientContext): void {
