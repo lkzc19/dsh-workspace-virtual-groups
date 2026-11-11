@@ -29,6 +29,27 @@ const GROUP_MIME = 'application/x-dsh-workspace-virtual-group'
 
 /** Layer glyph used by the new-group button and the view-options item. */
 const LAYER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" data-wvg-layer="1" aria-hidden="true"><path d="M8 1.8 14 5 8 8.2 2 5 8 1.8Z"></path><path d="M2 8 8 11.2 14 8"></path><path d="M2 11 8 14.2 14 11"></path></svg>'
+/** Official grouping-mode icons; stable across UI locales. */
+const GROUPING = {
+  workspace: {
+    icon: 'dsw-icon-folder-close-regular',
+    labels: ['按工作区', 'By workspace'],
+  },
+  tree: {
+    icon: 'dsw-icon-workspace-tree-outline-regular',
+    labels: ['按工作区树', 'By workspace tree'],
+  },
+  flatList: {
+    icon: 'dsw-icon-flat-list-outline-regular',
+    labels: ['单列表', 'Flat list'],
+  },
+} as const
+const OFFICIAL_GROUPING_ICONS = new Set<string>(
+  Object.values(GROUPING).map((entry) => entry.icon),
+)
+const OFFICIAL_GROUPING_LABELS = new Set<string>(
+  Object.values(GROUPING).flatMap((entry) => entry.labels),
+)
 const CONFIG_ROUTE = '/workspace-virtual-groups/config'
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
@@ -159,7 +180,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let disposed = false
   let config: GroupsConfig = { categories: [] }
   let manual: NormalizedManual = EMPTY_MANUAL
-  let ready = false
+  let loaded = false
   let list: HTMLElement | null = null
   let viewMode: 'virtual' | 'official' = 'virtual'
   let suppressViewModeClick = false
@@ -168,6 +189,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let addingWorkspace = false
   let frame = 0
   let menu: HTMLElement | null = null
+  let menuAnchor: HTMLElement | null = null
   let menuPointerClose: ((event: PointerEvent) => void) | null = null
   let menuKeyClose: ((event: KeyboardEvent) => void) | null = null
   let modal: HTMLElement | null = null
@@ -183,6 +205,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   const originalIndent = new WeakMap<HTMLElement, string>()
   const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
   const headerActionsMeta = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
+  const headerActionsTracked = new Set<HTMLElement>()
 
   const workspaceSnapshot = () => ctx.workspaces.list.getSnapshot()
   const workspaceInfo = (id: string): WorkspaceInfo | undefined => workspaceMap.get(id)
@@ -299,6 +322,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     actions.style.minWidth = original.minWidth
     actions.style.overflow = original.overflow
     headerActionsMeta.delete(actions)
+    headerActionsTracked.delete(actions)
   }
 
   function removeNewGroupButtons(): void {
@@ -307,6 +331,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       node.remove()
       restoreHeaderActions(actions)
     })
+    for (const actions of [...headerActionsTracked]) restoreHeaderActions(actions)
   }
 
   /** The layer-icon button next to the official add-workspace button. */
@@ -355,24 +380,57 @@ export function mountWorkspaceVirtualGroups(ctx: {
           minWidth: actions.style.minWidth,
           overflow: actions.style.overflow,
         })
+        headerActionsTracked.add(actions)
       }
-      actions.style.width = '88px'
-      actions.style.minWidth = '88px'
+      actions.style.width = 'max-content'
+      actions.style.minWidth = 'max-content'
       actions.style.overflow = 'visible'
     }
   }
 
-  function findViewOptionsMenu(): HTMLElement | null {
-    for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
-      const text = menu.textContent ?? ''
-      if (text.includes('分组方式') && text.includes('按工作区树')) return menu
-    }
-    return null
+  function groupingIcon(button: HTMLButtonElement): string | null {
+    const svg = button.querySelector<SVGElement>(':scope > span svg[data-icon]')
+    return svg?.getAttribute('data-icon') ?? null
   }
 
-  function groupingButton(menu: HTMLElement, label: string): HTMLButtonElement | null {
-    return [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
-      .find((button) => (button.textContent ?? '').trim() === label) ?? null
+  function groupingLabel(button: HTMLButtonElement): string {
+    return (button.textContent ?? '').trim()
+  }
+
+  function isOfficialGroupingButton(button: HTMLButtonElement): boolean {
+    const icon = groupingIcon(button)
+    if (icon !== null && OFFICIAL_GROUPING_ICONS.has(icon)) return true
+    // Fallback for a DSH build that changes the icon names.
+    return OFFICIAL_GROUPING_LABELS.has(groupingLabel(button))
+  }
+
+  function findGroupingButton(
+    menu: HTMLElement,
+    group: (typeof GROUPING)[keyof typeof GROUPING],
+  ): HTMLButtonElement | null {
+    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
+    const labels: readonly string[] = group.labels
+    return buttons.find((button) => groupingIcon(button) === group.icon)
+      ?? buttons.find((button) => labels.includes(groupingLabel(button)))
+      ?? null
+  }
+
+  function virtualGroupingLabel(menu: HTMLElement): string {
+    const workspace = findGroupingButton(menu, GROUPING.workspace)
+    const label = workspace === null ? '' : groupingLabel(workspace)
+    return label.includes('按') || label.includes('工作区') ? '按虚拟分组' : 'Virtual groups'
+  }
+
+  function findViewOptionsMenu(): HTMLElement | null {
+    for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
+      // The CSS-module local name survives hashing and is language-independent.
+      if (menu.className.includes('viewOptionsMenu')) return menu
+      // Fallback: a menu that contains an official grouping mode.
+      if ([...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].some(isOfficialGroupingButton)) {
+        return menu
+      }
+    }
+    return null
   }
 
   function closeViewOptions(): void {
@@ -387,14 +445,10 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function ensureViewOptions(): void {
     const menu = findViewOptionsMenu()
     if (menu === null) return
-    const officialLabels = ['按工作区', '按工作区树', '单列表']
-    const isOfficial = (button: HTMLButtonElement): boolean => {
-      const label = (button.textContent ?? '').trim()
-      return officialLabels.includes(label)
-    }
+    const isOfficial = isOfficialGroupingButton
     let ours = menu.querySelector<HTMLButtonElement>('button[data-wvg-view-virtual]')
     if (ours === null) {
-      const tree = groupingButton(menu, '按工作区树')
+      const tree = findGroupingButton(menu, GROUPING.tree)
       const wrap = tree?.parentElement
       if (tree === null || wrap === undefined || wrap === null) return
       const official = [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].filter(isOfficial)
@@ -413,9 +467,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
       if (button === null) return
       button.dataset.wvgViewVirtual = '1'
       button.className = baseClass
-      const label = [...button.querySelectorAll('span')]
-        .find((span) => span.textContent?.trim() === '按工作区树')
-      if (label !== undefined) label.textContent = '按虚拟分组'
+      const label = [...button.querySelectorAll(':scope > span')]
+        .find((span) => span.querySelector('svg') === null && (span.textContent ?? '').trim() !== '')
+      if (label !== undefined) label.textContent = virtualGroupingLabel(menu)
       const icon = button.querySelector<HTMLElement>('[class*="itemIcon"]')
         ?? [...button.querySelectorAll('span')].find((span) => span.querySelector('svg') !== null)
       if (icon !== undefined) icon.innerHTML = LAYER_ICON
@@ -469,6 +523,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   function setViewMode(mode: 'virtual' | 'official'): void {
+    if (!loaded) return
     if (viewMode === mode) {
       schedule()
       return
@@ -483,7 +538,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function activateVirtualMode(menu: HTMLElement): void {
     setViewMode('virtual')
-    const byWorkspace = groupingButton(menu, '按工作区')
+    const byWorkspace = findGroupingButton(menu, GROUPING.workspace)
     if (byWorkspace === null) {
       closeViewOptions()
       return
@@ -508,7 +563,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
     header.setAttribute('aria-expanded', 'true')
     header.setAttribute('aria-label', key)
     header.draggable = key !== DEFAULT_GROUP
-    header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span><button type="button" class="wvg-more" aria-label="分组“${key}”的操作" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`
+    header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span><button type="button" class="wvg-more" aria-label="分组操作" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`
+    // Group names are user input; never interpolate them into innerHTML.
+    header.querySelector<HTMLElement>('.wvg-more')?.setAttribute('aria-label', `分组“${key}”的操作`)
     header.addEventListener('dragstart', (event) => {
       if (key === DEFAULT_GROUP) {
         event.preventDefault()
@@ -550,10 +607,12 @@ export function mountWorkspaceVirtualGroups(ctx: {
     const rowAction = document.querySelector<HTMLButtonElement>('[data-row-key^="workspace:"] [data-context-menu-trigger]')
     const nativeClass = rowAction?.className ?? officialAddButton()?.className ?? ''
     if (nativeClass === '') return
-    const classes = nativeClass.split(/\s+/).filter(Boolean)
     document.querySelectorAll<HTMLButtonElement>('.wvg-more').forEach((button) => {
-      if (button.dataset.wvgNativeIcon === '1') return
-      button.classList.add(...classes)
+      const previous = button.dataset.wvgNativeClass ?? ''
+      if (previous === nativeClass) return
+      for (const name of previous.split(/\s+/).filter(Boolean)) button.classList.remove(name)
+      button.classList.add(...nativeClass.split(/\s+/).filter(Boolean))
+      button.dataset.wvgNativeClass = nativeClass
       button.dataset.wvgNativeIcon = '1'
     })
   }
@@ -561,8 +620,14 @@ export function mountWorkspaceVirtualGroups(ctx: {
   /** Apply grouping: headers, order, collapse and the new-group button. */
   function reconcile(): void {
     if (disposed) return
+    // Do not render or allow edits before the overlay has loaded: persisting an
+    // empty placeholder would wipe existing groups if the config request failed.
+    if (!loaded) {
+      cleanupList()
+      removeNewGroupButtons()
+      return
+    }
     ensureViewOptions()
-    if (!ready) return
     ensureNewGroupButton()
     if (viewMode !== 'virtual') {
       cleanupList()
@@ -804,6 +869,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = danger ? 'wvg-menu-item wvg-danger' : 'wvg-menu-item'
+    button.setAttribute('role', 'menuitem')
     button.innerHTML = `<span class="wvg-menu-icon">${svgIcon(icon, 16)}</span><span class="wvg-menu-label"></span>`
     const text = button.querySelector<HTMLElement>('.wvg-menu-label')
     if (text !== null) text.textContent = label
@@ -812,10 +878,12 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
     closeMenu()
+    menuAnchor = anchor
     anchor.closest<HTMLElement>('.wvg-group')?.classList.add('wvg-menu-open')
     const panel = document.createElement('div')
     panel.className = 'wvg-menu'
     panel.setAttribute('role', 'menu')
+    panel.setAttribute('aria-label', `分组“${key}”的操作`)
     const addWorkspace = menuItem('添加工作区', 'dsw-icon-project-add-outline-regular')
     addWorkspace.addEventListener('click', () => {
       closeMenu()
@@ -861,17 +929,23 @@ export function mountWorkspaceVirtualGroups(ctx: {
       if (event.key === 'Escape') closeMenu()
     }
     document.addEventListener('keydown', menuKeyClose, true)
-    anchor.focus?.()
+    panel.querySelector<HTMLButtonElement>('.wvg-menu-item')?.focus()
   }
 
   function closeMenu(): void {
-    document.querySelectorAll<HTMLElement>('.wvg-group.wvg-menu-open').forEach((header) => header.classList.remove('wvg-menu-open'))
+    const openHeaders = [...document.querySelectorAll<HTMLElement>('.wvg-group.wvg-menu-open')]
     if (menuPointerClose !== null) document.removeEventListener('pointerdown', menuPointerClose, true)
     if (menuKeyClose !== null) document.removeEventListener('keydown', menuKeyClose, true)
     menuPointerClose = null
     menuKeyClose = null
+    const anchor = menuAnchor
+    menuAnchor = null
     menu?.remove()
     menu = null
+    // Keep the hover-only trigger visible while returning focus to it; once
+    // focus lands, :focus-within keeps it visible after the class is removed.
+    if (anchor?.isConnected) anchor.focus()
+    openHeaders.forEach((header) => header.classList.remove('wvg-menu-open'))
   }
 
   async function renameGroup(from: string, name: string): Promise<void> {
@@ -929,6 +1003,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     overlay.className = 'wvg-overlay'
     overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true"><div class="wvg-dialog-header"><div class="wvg-dialog-title"></div><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><input class="wvg-input" type="text" maxlength="80" /><div class="wvg-error" role="alert"></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-primary" data-wvg-ok></button></div></div>`
     const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
+    dialog.setAttribute('aria-label', title)
     dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
     const input = dialog.querySelector<HTMLInputElement>('.wvg-input')!
     input.value = initial
@@ -994,6 +1069,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     overlay.className = 'wvg-overlay'
     overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true"><div class="wvg-dialog-header"><div class="wvg-dialog-title"></div><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-message"></div><div class="wvg-error" role="alert"></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-danger" data-wvg-ok>删除</button></div></div>`
     const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
+    dialog.setAttribute('aria-label', title)
     dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
     dialog.querySelector<HTMLElement>('.wvg-dialog-message')!.textContent = message
     const error = dialog.querySelector<HTMLElement>('.wvg-error')!
@@ -1027,6 +1103,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
       if (event.key === 'Escape') close()
     }
     document.addEventListener('keydown', modalKeyHandler)
+    window.requestAnimationFrame(() => {
+      dialog.querySelector<HTMLButtonElement>('[data-wvg-cancel]')?.focus()
+    })
   }
 
   function closeModal(): void {
@@ -1054,16 +1133,41 @@ export function mountWorkspaceVirtualGroups(ctx: {
     config = state.config
     manual = state.manual
     viewMode = manual.mode
-    ready = true
+    loaded = true
     schedule()
   }).catch((reason: unknown) => {
     if (disposed) return
-    ready = true
+    loaded = false
     console.warn('workspace virtual groups: config unavailable:', reason)
+    showToast('分组配置加载失败，虚拟分组已暂时停用。请刷新重试。')
     schedule()
   })
 
-  const observer = new MutationObserver(schedule)
+  // The conversation streams below the sidebar; observing every mutation would
+  // reconcile once per frame for no reason. Only schedule when the sidebar
+  // list, its header actions, or an official/injected menu is touched.
+  const OBSERVED_SELECTOR = [
+    '[role="tree"]',
+    '[role="menu"]',
+    '[class*="viewOptionsMenu"]',
+    '[class*="sectionHeader"]',
+    '[class*="headerActions"]',
+    '[data-wvg-new-group]',
+    '[data-wvg-view-wrap]',
+  ].join(',')
+  const mutationRelevant = (record: MutationRecord): boolean => {
+    if (record.target instanceof Element && record.target.closest(OBSERVED_SELECTOR) !== null) return true
+    for (const node of record.addedNodes) {
+      if (node instanceof Element && (node.matches(OBSERVED_SELECTOR) || node.querySelector(OBSERVED_SELECTOR) !== null)) return true
+    }
+    for (const node of record.removedNodes) {
+      if (node instanceof Element && (node.matches(OBSERVED_SELECTOR) || node.querySelector(OBSERVED_SELECTOR) !== null)) return true
+    }
+    return !(record.target instanceof Element)
+  }
+  const observer = new MutationObserver((records) => {
+    if (records.some(mutationRelevant)) schedule()
+  })
   observer.observe(document.body, { childList: true, subtree: true })
   document.addEventListener('dragstart', onDocumentDragStart, true)
   document.addEventListener('dragend', onDocumentDragEnd, true)

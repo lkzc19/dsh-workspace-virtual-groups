@@ -31,6 +31,20 @@
 
 ## 安装
 
+### 从 GitHub 安装
+
+先把仓库推到 GitHub，然后把下面的 `<你的用户名>` 换成实际地址：
+
+```sh
+# 桌面端
+dsh plugin --profile desktop add "https://github.com/<你的用户名>/dsh-workspace-virtual-groups.git"
+
+# 只在浏览器/Web 端使用
+dsh plugin --profile web add "https://github.com/<你的用户名>/dsh-workspace-virtual-groups.git"
+```
+
+`lib/` 已提交，安装时不需要构建。安装后重启 DSH。如果当前 dsh 版本不接受 Git URL，也可以先 `git clone`，再按下面的本地目录方式安装。
+
 ### 本地目录安装（开发时）
 
 ```sh
@@ -121,15 +135,25 @@ categories:
 ```sh
 npm install
 npm run build
+npm test
 ```
 
 `scripts/build-client.mjs` 用 esbuild 生成 DSH 模块加载器需要的 lazy-CJS 产物。浏览器半没有 React 或 UI 库依赖。
 
+## 已知限制
+
+- **DOM 薄层**：分组依赖官方侧边栏的 `[role="tree"]`、`[data-row-key^="workspace:"]`、视图菜单的图标 id 和 CSS module 类名。DSH 大版本升级如果改了这些结构，插件会自动退化为不分组，不会写坏官方数据；但新版本可能暂时看不到「按虚拟分组」入口。
+- **界面语言**：分组操作文案目前是简体中文；「按虚拟分组」菜单项会跟随官方菜单语言显示中文/英文，其余文案暂未做完整 i18n。
+- **layer 图标**：DSH 图标 sprite 里没有 layer symbol，新建分组和「按虚拟分组」使用的是插件内联的 layer SVG；其他图标都复用官方 sprite。
+- **视图选项注入**：菜单项是运行时插入官方菜单的，官方菜单的键盘循环可能不包含它；鼠标/触屏点击可用。
+- **平台**：目前主要验证 macOS 桌面端与 `dsh web`；Windows/Linux 理论上可用，但未逐一验证。
+- **数据归属**：分组数据在 `$DSH_HOME/workspace-virtual-groups.manual.json`，卸载插件不会删除它；需要彻底清理时手动删除该文件即可。
+
 ## 兼容性
 
-- 面向 DSH Web 0.2.x。
+- 面向 DSH Web 0.2.x；已在 0.2.2-rc.1 验证。
 - 依赖官方 Workspace 浏览器的 DOM 结构（`[data-row-key^="workspace:"]`、`[role="tree"]` 和项目区块）。如果 DSH 后续修改这些结构，插件会自动退化为“不分组”，不会破坏官方列表。
 
 ## 许可证与致谢
 
-MIT。基于 [z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups)（Copyright (c) 2026 zcol）修改，原项目同样以 MIT 发布。完整的 MIT 文本见 [LICENSE](./LICENSE)。
+MIT。基于 [z-col/dsh-workspace-groups](https://github.com/z-col/dsh-workspace-groups)（Copyright (c) 2026 zcol）修改，原项目同样以 MIT 发布。完整的 MIT 文本见 [LICENSE](./LICENSE)；随包分发的第三方依赖许可见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
