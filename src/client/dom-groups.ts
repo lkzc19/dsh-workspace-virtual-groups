@@ -26,6 +26,9 @@ import css from './styles.css?inline'
 
 const MIME = 'application/x-dsh-workspace-virtual-groups'
 const GROUP_MIME = 'application/x-dsh-workspace-virtual-group'
+
+/** Layer glyph used by the new-group button and the view-options item. */
+const LAYER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" data-wvg-layer="1" aria-hidden="true"><path d="M8 1.8 14 5 8 8.2 2 5 8 1.8Z"></path><path d="M2 8 8 11.2 14 8"></path><path d="M2 11 8 14.2 14 11"></path></svg>'
 const CONFIG_ROUTE = '/workspace-virtual-groups/config'
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
@@ -41,6 +44,7 @@ const EMPTY_MANUAL: NormalizedManual = {
   workspaceOrder: {},
   renamed: {},
   hidden: [],
+  mode: 'virtual',
 }
 
 interface WorkspaceInfo {
@@ -76,6 +80,7 @@ function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
     workspaceOrder,
     renamed: manual.renamed ?? {},
     hidden: manual.hidden ?? [],
+    mode: manual.mode === 'official' ? 'official' : 'virtual',
   }
 }
 
@@ -156,8 +161,10 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let manual: NormalizedManual = EMPTY_MANUAL
   let ready = false
   let list: HTMLElement | null = null
-  let repurposedAdd: HTMLButtonElement | null = null
-  let originalAdd: { ariaLabel: string | null; ariaKeyshortcuts: string | null; title: string | null; icon: string | null; dataIcon: string | null } | null = null
+  let viewMode: 'virtual' | 'official' = 'virtual'
+  let suppressViewModeClick = false
+  let lastSelectedExtra: string[] = []
+  let lastCheckHTML: string | null = null
   let addingWorkspace = false
   let frame = 0
   let menu: HTMLElement | null = null
@@ -174,6 +181,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
   const collapsed = readCollapsed()
   /** Official `--dsh-workspace-indent` value before this layer touched a section. */
   const originalIndent = new WeakMap<HTMLElement, string>()
+  const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
+  const headerActionsMeta = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
 
   const workspaceSnapshot = () => ctx.workspaces.list.getSnapshot()
   const workspaceInfo = (id: string): WorkspaceInfo | undefined => workspaceMap.get(id)
@@ -262,74 +271,232 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Restore the official "add workspace" button after this layer unmounts. */
-  function restoreAddButton(): void {
-    const button = repurposedAdd
-    if (button !== null && button.isConnected && originalAdd !== null) {
-      const set = (name: string, value: string | null): void => {
-        if (value === null) button.removeAttribute(name)
-        else button.setAttribute(name, value)
-      }
-      set('aria-label', originalAdd.ariaLabel)
-      set('aria-keyshortcuts', originalAdd.ariaKeyshortcuts)
-      set('title', originalAdd.title)
+  /** Undo the old 0.1.x repurposing of the official add-workspace button. */
+  function restoreLegacyAddButton(): void {
+    document.querySelectorAll<HTMLButtonElement>('button[data-wvg-add-group]').forEach((button) => {
+      delete button.dataset.wvgAddGroup
+      button.setAttribute('aria-label', '添加工作区')
+      button.setAttribute('aria-keyshortcuts', 'Alt+Meta+O')
       const svg = button.querySelector('svg')
       const use = button.querySelector('use')
-      if (use !== null && originalAdd.icon !== null) use.setAttribute('href', originalAdd.icon)
-      if (svg !== null && originalAdd.dataIcon !== null) svg.setAttribute('data-icon', originalAdd.dataIcon)
-      delete button.dataset.wvgAddGroup
-    }
-    repurposedAdd = null
-    originalAdd = null
+      if (svg !== null) svg.setAttribute('data-icon', 'dsw-icon-project-add-outline-regular')
+      if (use !== null) use.setAttribute('href', '#dsw-icon-project-add-outline-regular')
+    })
   }
 
-  /**
-   * Change the official "add workspace" header button into "new group".
-   * The original click is intercepted in the capture phase; adding a
-   * workspace now lives on each group's menu instead.
-   */
-  function ensureAddGroupButton(): void {
-    try {
-      document.querySelectorAll('[data-wvg-new-group]').forEach((node) => node.remove())
-      const marked = document.querySelector<HTMLButtonElement>('button[data-wvg-add-group]')
-      const add = marked
-        ?? document.querySelector<SVGUseElement>('use[href="#dsw-icon-project-add-outline-regular"]')?.closest('button')
-      if (add === null || !(add instanceof HTMLButtonElement)) {
-        restoreAddButton()
-        return
+  function officialAddButton(): HTMLButtonElement | null {
+    const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-project-add-outline-regular"]')
+    const button = use?.closest('button')
+    return button instanceof HTMLButtonElement ? button : null
+  }
+
+  /** Restore the official header-actions width after the extra button goes away. */
+  function restoreHeaderActions(actions: HTMLElement | null): void {
+    if (actions === null) return
+    const original = headerActionsMeta.get(actions)
+    if (original === undefined) return
+    actions.style.width = original.width
+    actions.style.minWidth = original.minWidth
+    actions.style.overflow = original.overflow
+    headerActionsMeta.delete(actions)
+  }
+
+  function removeNewGroupButtons(): void {
+    document.querySelectorAll<HTMLElement>('[data-wvg-new-group]').forEach((node) => {
+      const actions = node.parentElement
+      node.remove()
+      restoreHeaderActions(actions)
+    })
+  }
+
+  /** The layer-icon button next to the official add-workspace button. */
+  function ensureNewGroupButton(): void {
+    restoreLegacyAddButton()
+    if (viewMode !== 'virtual') {
+      removeNewGroupButtons()
+      return
+    }
+    const add = officialAddButton()
+    if (add === null) {
+      removeNewGroupButtons()
+      return
+    }
+    let button = document.querySelector<HTMLButtonElement>('button[data-wvg-new-group]')
+    if (button !== null && button.dataset.wvgVersion !== '2') {
+      const oldActions = button.parentElement
+      button.remove()
+      restoreHeaderActions(oldActions)
+      button = null
+    }
+    if (button === null || !button.isConnected) {
+      button = add.cloneNode(true) as HTMLButtonElement
+      button.dataset.wvgNewGroup = '1'
+      button.dataset.wvgVersion = '2'
+      add.after(button)
+    }
+    if (button.previousElementSibling !== add) add.after(button)
+    button.setAttribute('aria-label', '新建分组')
+    button.removeAttribute('aria-keyshortcuts')
+    button.removeAttribute('aria-expanded')
+    if (button.querySelector('svg[data-wvg-layer="1"]') === null) button.innerHTML = LAYER_ICON
+    button.onclick = (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openCreateGroupDialog()
+    }
+    // The official actions container is sized for two 28px buttons and clips
+    // overflow. Widen it to fit the layer button; restore it when the button is
+    // removed or the plugin unmounts.
+    const actions = button.parentElement
+    if (actions !== null) {
+      if (!headerActionsMeta.has(actions)) {
+        headerActionsMeta.set(actions, {
+          width: actions.style.width,
+          minWidth: actions.style.minWidth,
+          overflow: actions.style.overflow,
+        })
       }
-      if (repurposedAdd !== add) {
-        restoreAddButton()
-        repurposedAdd = add
-        const svg = add.querySelector('svg')
-        const use = add.querySelector('use')
-        originalAdd = {
-          ariaLabel: add.getAttribute('aria-label'),
-          ariaKeyshortcuts: add.getAttribute('aria-keyshortcuts'),
-          title: add.getAttribute('title'),
-          icon: use?.getAttribute('href') ?? null,
-          dataIcon: svg?.getAttribute('data-icon') ?? null,
-        }
-      }
-      add.dataset.wvgAddGroup = '1'
-      add.setAttribute('aria-label', '新建分组')
-      add.removeAttribute('aria-keyshortcuts')
-      const svg = add.querySelector('svg')
-      const use = add.querySelector('use')
-      if (svg !== null) svg.setAttribute('data-icon', 'dsw-icon-folder-open-outline-regular')
-      if (use !== null) use.setAttribute('href', '#dsw-icon-folder-open-outline-regular')
-    } catch (reason) {
-      console.warn('workspace virtual groups: add-group button could not mount:', reason)
+      actions.style.width = '88px'
+      actions.style.minWidth = '88px'
+      actions.style.overflow = 'visible'
     }
   }
 
-  function onAddGroupClick(event: MouseEvent): void {
-    const target = event.target as Element | null
-    const button = target?.closest<HTMLElement>('[data-wvg-add-group]')
-    if (button === null || button === undefined) return
-    event.preventDefault()
-    event.stopPropagation()
-    openCreateGroupDialog()
+  function findViewOptionsMenu(): HTMLElement | null {
+    for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
+      const text = menu.textContent ?? ''
+      if (text.includes('分组方式') && text.includes('按工作区树')) return menu
+    }
+    return null
+  }
+
+  function groupingButton(menu: HTMLElement, label: string): HTMLButtonElement | null {
+    return [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
+      .find((button) => (button.textContent ?? '').trim() === label) ?? null
+  }
+
+  function closeViewOptions(): void {
+    if (findViewOptionsMenu() === null) return
+    const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-sliders-two-outline-regular"]')
+    const trigger = use?.closest('button')
+    if (trigger instanceof HTMLButtonElement) trigger.click()
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  }
+
+  /** Add/refresh the "按虚拟分组" item inside the official view-options menu. */
+  function ensureViewOptions(): void {
+    const menu = findViewOptionsMenu()
+    if (menu === null) return
+    const officialLabels = ['按工作区', '按工作区树', '单列表']
+    const isOfficial = (button: HTMLButtonElement): boolean => {
+      const label = (button.textContent ?? '').trim()
+      return officialLabels.includes(label)
+    }
+    let ours = menu.querySelector<HTMLButtonElement>('button[data-wvg-view-virtual]')
+    if (ours === null) {
+      const tree = groupingButton(menu, '按工作区树')
+      const wrap = tree?.parentElement
+      if (tree === null || wrap === undefined || wrap === null) return
+      const official = [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].filter(isOfficial)
+      const unselected = official.find((button) => button.querySelector(':scope > svg') === null) ?? tree
+      const selected = official.find((button) => button.querySelector(':scope > svg') !== null)
+      const baseClass = unselected.className
+      const selectedExtra = selected === undefined
+        ? []
+        : [...selected.classList].filter((name) => !unselected.classList.contains(name))
+      const checkHTML = selected?.querySelector(':scope > svg')?.outerHTML ?? null
+      if (selectedExtra.length > 0) lastSelectedExtra = selectedExtra
+      if (checkHTML !== null) lastCheckHTML = checkHTML
+      const clone = wrap.cloneNode(true) as HTMLElement
+      clone.dataset.wvgViewWrap = '1'
+      const button = clone.querySelector<HTMLButtonElement>('button[role="menuitem"]')
+      if (button === null) return
+      button.dataset.wvgViewVirtual = '1'
+      button.className = baseClass
+      const label = [...button.querySelectorAll('span')]
+        .find((span) => span.textContent?.trim() === '按工作区树')
+      if (label !== undefined) label.textContent = '按虚拟分组'
+      const icon = button.querySelector<HTMLElement>('[class*="itemIcon"]')
+        ?? [...button.querySelectorAll('span')].find((span) => span.querySelector('svg') !== null)
+      if (icon !== undefined) icon.innerHTML = LAYER_ICON
+      button.querySelector(':scope > svg')?.remove()
+      wrap.after(clone)
+      viewMenuMeta.set(button, {
+        baseClass,
+        selectedExtra: selectedExtra.length > 0 ? selectedExtra : lastSelectedExtra,
+        check: checkHTML ?? lastCheckHTML,
+      })
+      button.addEventListener('click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        activateVirtualMode(menu)
+      })
+      ours = button
+    }
+
+    if (menu.dataset.wvgModeListener !== '1') {
+      menu.dataset.wvgModeListener = '1'
+      menu.addEventListener('click', (event) => {
+        if (suppressViewModeClick) return
+        const button = (event.target as Element | null)?.closest<HTMLButtonElement>('button[role="menuitem"]')
+        if (button === null || button === undefined) return
+        if (!isOfficial(button)) return
+        setViewMode('official')
+      }, true)
+    }
+
+    const meta = viewMenuMeta.get(ours)
+      ?? { baseClass: ours.className, selectedExtra: lastSelectedExtra, check: lastCheckHTML }
+    if (viewMode === 'virtual') {
+      for (const button of menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')) {
+        if (button === ours || !isOfficial(button)) continue
+        if (meta.selectedExtra.length > 0) button.classList.remove(...meta.selectedExtra)
+        button.querySelector(':scope > svg')?.remove()
+      }
+      ours.className = meta.selectedExtra.length > 0
+        ? `${meta.baseClass} ${meta.selectedExtra.join(' ')}`
+        : meta.baseClass
+      if (meta.check !== null && ours.querySelector(':scope > svg') === null) {
+        const holder = document.createElement('template')
+        holder.innerHTML = meta.check
+        const check = holder.content.firstElementChild
+        if (check !== null) ours.append(check)
+      }
+    } else {
+      ours.className = meta.baseClass
+      ours.querySelector(':scope > svg')?.remove()
+    }
+  }
+
+  function setViewMode(mode: 'virtual' | 'official'): void {
+    if (viewMode === mode) {
+      schedule()
+      return
+    }
+    viewMode = mode
+    manual = { ...manual, mode }
+    schedule()
+    void persist(manual).catch((reason) => {
+      showToast(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+
+  function activateVirtualMode(menu: HTMLElement): void {
+    setViewMode('virtual')
+    const byWorkspace = groupingButton(menu, '按工作区')
+    if (byWorkspace === null) {
+      closeViewOptions()
+      return
+    }
+    // Selecting virtual grouping also normalizes the official mode to the flat
+    // "按工作区" list, otherwise the official tree nesting would fight the
+    // virtual sections. Suppress our own official-item listener for this click.
+    suppressViewModeClick = true
+    byWorkspace.click()
+    window.setTimeout(() => {
+      suppressViewModeClick = false
+      if (menu.isConnected) closeViewOptions()
+    }, 0)
   }
 
   function createGroupHeader(key: string): HTMLElement {
@@ -381,7 +548,13 @@ export function mountWorkspaceVirtualGroups(ctx: {
   /** Apply grouping: headers, order, collapse and the new-group button. */
   function reconcile(): void {
     if (disposed) return
-    ensureAddGroupButton()
+    ensureViewOptions()
+    if (!ready) return
+    ensureNewGroupButton()
+    if (viewMode !== 'virtual') {
+      cleanupList()
+      return
+    }
     const nextList = findList()
     if (nextList !== list) {
       cleanupList()
@@ -389,7 +562,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
     if (list === null) return
     const sections = sectionsOf(list)
-    if (!ready || sections.length === 0) {
+    if (sections.length === 0) {
       cleanupList()
       return
     }
@@ -860,6 +1033,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     if (disposed) return
     config = state.config
     manual = state.manual
+    viewMode = manual.mode
     ready = true
     schedule()
   }).catch((reason: unknown) => {
@@ -871,7 +1045,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   const observer = new MutationObserver(schedule)
   observer.observe(document.body, { childList: true, subtree: true })
-  document.addEventListener('click', onAddGroupClick, true)
   document.addEventListener('dragstart', onDocumentDragStart, true)
   document.addEventListener('dragend', onDocumentDragEnd, true)
   schedule()
@@ -880,16 +1053,17 @@ export function mountWorkspaceVirtualGroups(ctx: {
     disposed = true
     stopWorkspaces()
     observer.disconnect()
-    document.removeEventListener('click', onAddGroupClick, true)
     document.removeEventListener('dragstart', onDocumentDragStart, true)
     document.removeEventListener('dragend', onDocumentDragEnd, true)
     if (frame !== 0) window.cancelAnimationFrame(frame)
     window.clearTimeout(toastTimer)
     closeMenu()
+    closeViewOptions()
     closeModal()
     cleanupList()
-    restoreAddButton()
-    document.querySelectorAll('[data-wvg-new-group]').forEach((node) => node.remove())
+    restoreLegacyAddButton()
+    removeNewGroupButtons()
+    document.querySelectorAll('[data-wvg-view-wrap]').forEach((node) => node.remove())
     style.remove()
   }
 }

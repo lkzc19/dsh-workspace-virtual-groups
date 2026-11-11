@@ -83,6 +83,12 @@ export function parseManualGroups(raw: unknown): ManualGroups {
   }
 
   const manual: ManualGroups = { categories, assignments }
+  if (source.mode !== undefined) {
+    if (source.mode !== 'virtual' && source.mode !== 'official') {
+      throw new Error('workspace-virtual-groups.manual.json: mode must be "virtual" or "official"')
+    }
+    manual.mode = source.mode
+  }
 
   if (source.categoryOrder !== undefined) {
     manual.categoryOrder = parseStringList(source.categoryOrder, 'categoryOrder', true)

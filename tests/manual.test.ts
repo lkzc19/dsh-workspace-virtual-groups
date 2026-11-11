@@ -66,6 +66,14 @@ describe('parseManualGroups', () => {
     expect(parsed.assignments['ws-1']).toBeNull()
   })
 
+
+  it('parses the persisted view mode', () => {
+    expect(parseManualGroups({ mode: 'official' }).mode).toBe('official')
+    expect(parseManualGroups({ mode: 'virtual' }).mode).toBe('virtual')
+    expect(parseManualGroups({}).mode).toBeUndefined()
+    expect(() => parseManualGroups({ mode: 'other' })).toThrow(/mode/)
+  })
+
   it('parses the v2 ordering/rename/hidden fields', () => {
     const parsed = parseManualGroups({
       categories: ['临时'],

@@ -47,6 +47,9 @@ export interface GroupsConfig {
  * older plugin versions keep working); rendering falls back to sensible
  * defaults when they are absent.
  */
+/** Which grouping surface the sidebar should present. */
+export type GroupViewMode = 'virtual' | 'official'
+
 export interface ManualGroups {
   /**
    * Manually created category folder names. These have no rules — they render
@@ -84,6 +87,11 @@ export interface ManualGroups {
    * inert: workspaces matching them become top-level (ungrouped).
    */
   hidden?: string[]
+  /**
+   * View mode last selected in the official view-options menu. Absent is
+   * treated as `virtual`, preserving the plugin's original behavior.
+   */
+  mode?: GroupViewMode
 }
 
 /**
