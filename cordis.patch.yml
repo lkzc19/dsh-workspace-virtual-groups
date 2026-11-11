@@ -1,0 +1,12 @@
+# dsh-workspace-virtual-groups bundle patch.
+#
+# Installed through the official CLI:
+#
+#   dsh plugin --profile web add /absolute/path/to/dsh-workspace
+#
+# The CLI appends this package to `dsh.profile.bundles`; the profile boot then
+# merges this patch (one insert of the plugin row).
+- insert:
+    - id: workspace-virtual-groups
+      name: 'dsh-workspace-virtual-groups'
+      config: {}

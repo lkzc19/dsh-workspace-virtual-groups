@@ -1,0 +1,7 @@
+node_modules/
+.pnpm-store/
+.dsh-test/
+.dsh-src/
+*.tgz
+.dsh-indent/
+.dsh-official/

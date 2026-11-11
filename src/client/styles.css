@@ -1,0 +1,236 @@
+/* Virtual group labels are the ONLY new visual element. Official project and
+   session rows keep their own classes, fonts, spacing, icons and actions. */
+
+.wvg-list {
+  display: flex !important;
+  flex-direction: column;
+}
+
+.wvg-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  flex: none;
+  padding: 0 8px 0 9px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wvg-group[data-wvg-default='0'] {
+  margin-top: 6px;
+}
+
+.wvg-group:hover {
+  background: var(--dsw-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wvg-group.wvg-drop {
+  background: var(--dsw-bg-selected, rgba(74, 144, 217, 0.18));
+}
+
+.wvg-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--dsw-fg-3, rgba(127, 127, 127, 0.8));
+}
+
+.wvg-chevron svg {
+  transition: transform 120ms ease;
+}
+
+.wvg-group[aria-expanded='true'] .wvg-chevron svg {
+  transform: rotate(90deg);
+}
+
+.wvg-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wvg-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-fg-2, inherit);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.wvg-group:hover .wvg-more,
+.wvg-group:focus-within .wvg-more {
+  opacity: 1;
+}
+
+.wvg-more:hover {
+  background: var(--dsw-bg-hover, rgba(127, 127, 127, 0.16));
+}
+
+.wvg-menu {
+  position: fixed;
+  z-index: 1300;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--dsw-border, rgba(127, 127, 127, 0.2));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-bg-1, #fff));
+  box-shadow: var(--dsw-elevation-prominent, 0 12px 36px rgba(0, 0, 0, 0.22));
+}
+
+.wvg-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, var(--dsw-fg-1, inherit));
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wvg-menu-item:hover {
+  background: var(--dsw-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wvg-menu-item.wvg-danger {
+  color: var(--dsw-alias-label-danger, #d64545);
+}
+
+.wvg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.26);
+}
+
+.wvg-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px;
+  border: 1px solid var(--dsw-border, rgba(127, 127, 127, 0.2));
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2, var(--dsw-bg-1, #fff));
+  color: var(--dsw-alias-label-primary, var(--dsw-fg-1, #111));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  font: inherit;
+}
+
+.wvg-dialog-title {
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wvg-dialog-message {
+  margin-bottom: 12px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.wvg-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+  outline: none;
+  background: var(--dsw-bg-1, transparent);
+  color: var(--dsw-alias-label-primary, var(--dsw-fg-1, inherit));
+  font: inherit;
+  font-size: 13px;
+}
+
+.wvg-input:focus {
+  border-color: var(--dsw-accent, #4a90d9);
+}
+
+.wvg-error {
+  min-height: 0;
+  margin-top: 8px;
+  color: var(--dsw-alias-label-danger, #d64545);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.wvg-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.wvg-button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, var(--dsw-fg-1, inherit));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wvg-button:hover {
+  background: var(--dsw-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.wvg-button.wvg-primary {
+  border-color: var(--dsw-accent, #4a90d9);
+  background: var(--dsw-accent, #4a90d9);
+  color: #fff;
+}
+
+.wvg-button.wvg-danger {
+  border-color: var(--dsw-alias-label-danger, #d64545);
+  background: var(--dsw-alias-label-danger, #d64545);
+  color: #fff;
+}
+
+.wvg-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.wvg-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  z-index: 1500;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-inverse, #222);
+  color: var(--dsw-alias-label-inverse, #fff);
+  font-size: 12px;
+  line-height: 18px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  transform: translateX(-50%);
+}
