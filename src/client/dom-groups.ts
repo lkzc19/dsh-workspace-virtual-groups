@@ -1001,7 +1001,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     closeModal()
     const overlay = document.createElement('div')
     overlay.className = 'wvg-overlay'
-    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true"><div class="wvg-dialog-header"><div class="wvg-dialog-title"></div><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><input class="wvg-input" type="text" maxlength="80" /><div class="wvg-error" role="alert"></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-primary" data-wvg-ok></button></div></div>`
+    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body"><input class="wvg-input" type="text" maxlength="80" aria-label="分组名称" /><div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-primary" data-wvg-ok></button></div></div>`
     const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
     dialog.setAttribute('aria-label', title)
     dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
@@ -1067,7 +1067,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     closeModal()
     const overlay = document.createElement('div')
     overlay.className = 'wvg-overlay'
-    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true"><div class="wvg-dialog-header"><div class="wvg-dialog-title"></div><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-message"></div><div class="wvg-error" role="alert"></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-danger" data-wvg-ok>删除</button></div></div>`
+    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body"><div class="wvg-dialog-message"></div><div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-danger" data-wvg-ok>删除</button></div></div>`
     const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
     dialog.setAttribute('aria-label', title)
     dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
