@@ -1,95 +1,46 @@
 /**
- * Shared config types for dsh-workspace-virtual-groups. Pure types (zero runtime
- * deps) so both halves — the node half (sidecar YAML reading) and the
- * browser half (tree derivation) — compile against the same contract.
- */
-
-/** One classification rule: any rule that matches places the workspace in the category. */
-export interface GroupRule {
-  /** Absolute path prefix match (normalized, case-sensitive). */
-  pathPrefix?: string
-  /** Case-insensitive substring match against the workspace display title. */
-  nameContains?: string
-  /** Case-insensitive substring match against the workspace directory basename. */
-  basenameContains?: string
-  /** Exact absolute path match (normalized). */
-  pathExact?: string
-}
-
-/** One category folder in the sidebar tree. */
-export interface GroupCategory {
-  /** Display label of the category folder. */
-  name: string
-  /** Rules; a workspace is classified here when ANY rule matches. */
-  rules: GroupRule[]
-}
-
-/** The full sidecar configuration (mirrors workspace-virtual-groups.yaml). */
-export interface GroupsConfig {
-  /** Category folders, in render order. First match wins. */
-  categories: GroupCategory[]
-  /**
-   * Runtime grouping overlay (manual groups + per-workspace overrides).
-   * Optional: the YAML file itself never carries it — the host GET route
-   * merges it from `workspace-virtual-groups.manual.json`, and the browser PUT route
-   * replaces it whole.
-   */
-  manual?: ManualGroups
-}
-
-/**
- * Runtime-managed grouping overlay: groups created in the sidebar UI plus
- * per-workspace category overrides and user-controlled ordering. Owned by the
- * plugin (JSON sidecar, `$DSH_HOME/workspace-virtual-groups.manual.json`), never
- * written back into the operator YAML.
+ * Shared manual-group types for dsh-workspace-virtual-groups. Pure types (zero
+ * runtime deps) so the host half (sidecar persistence) and the browser half
+ * (tree derivation) compile against the same contract.
  *
- * All new fields are optional for backward compatibility (files written by
- * older plugin versions keep working); rendering falls back to sensible
- * defaults when they are absent.
+ * Groups are user-created only. The built-in default group catches every
+ * workspace that has no explicit assignment; there is no rule/YAML classifier.
  */
+
 /** Which grouping surface the sidebar should present. */
 export type GroupViewMode = 'virtual' | 'official'
 
+/**
+ * Runtime-managed grouping overlay: groups created in the sidebar UI plus
+ * per-workspace assignments and user-controlled ordering. Owned by the plugin
+ * (JSON sidecar, `$DSH_HOME/workspace-virtual-groups.manual.json`).
+ *
+ * Optional fields keep files written by older versions readable; unknown
+ * legacy fields (for example `renamed` / `hidden` from the removed rule
+ * classifier) are ignored and dropped on the next write.
+ */
 export interface ManualGroups {
-  /**
-   * Manually created category folder names. These have no rules — they render
-   * even while empty (a new group appears before anything is dragged into
-   * it) and hold only workspaces assigned to them.
-   */
+  /** Manually created group names, in creation order. */
   categories: string[]
   /**
-   * Per-workspace category override, keyed by workspace id. Value is a
-   * category display name (rule or manual), or `null` to force the workspace
-   * into the uncategorized bucket even when a rule would match. An absent
-   * key means "classify by rules".
+   * Per-workspace group assignment, keyed by workspace id. Value is a manual
+   * category name, or `null` for the built-in default group. An absent key is
+   * also treated as the default group.
    */
   assignments: Record<string, string | null>
   /**
-   * Display order of all category keys (rule display names + manual names).
-   * The uncategorized bucket is never listed — it always renders last.
-   * Absent = rule categories first (YAML order), manual groups appended in
-   * creation order.
+   * Display order of manual groups. The default group is pinned first and is
+   * never listed. Absent = manual creation order.
    */
   categoryOrder?: string[]
   /**
-   * Per-category ordered workspace ids (user drag-reorder within a group).
-   * Keyed by category display name; absent key = host registration order.
+   * Per-group ordered workspace ids (user drag-reorder within a group).
+   * Keyed by group name; absent key = registration order.
    */
   workspaceOrder?: Record<string, string[]>
   /**
-   * Rule category rename overrides: original YAML rule category name →
-   * display name (UI rename of a rule group). Rules still classify by the
-   * original name; only the rendered label/keys change.
-   */
-  renamed?: Record<string, string>
-  /**
-   * Rule category original names hidden by a UI delete. Hidden rules are
-   * inert: workspaces matching them become top-level (ungrouped).
-   */
-  hidden?: string[]
-  /**
    * View mode last selected in the official view-options menu. Absent is
-   * treated as `virtual`, preserving the plugin's original behavior.
+   * treated as `virtual`.
    */
   mode?: GroupViewMode
 }
@@ -107,10 +58,8 @@ export const UNCATEGORIZED_LABEL = '未分类'
  * explicit group assignment. The name is fixed by product requirement: it is
  * shown verbatim in every UI language and may never be renamed or deleted.
  *
- * Persistence convention: a `null` assignment means "default group" (the host
- * already accepts null for the legacy uncategorized bucket), and the default
- * group's project order is stored under `TOP_LEVEL_ORDER_KEY` because the host
- * validates `workspaceOrder` keys against real categories only.
+ * Persistence convention: a `null` assignment means "default group", and the
+ * default group's project order is stored under `TOP_LEVEL_ORDER_KEY`.
  */
 export const DEFAULT_GROUP = '默认'
 
@@ -124,13 +73,6 @@ export const LEGACY_DEFAULT_GROUP = '默认工作区'
 /**
  * Reserved key under `workspaceOrder` holding the manual order of TOP-LEVEL
  * (ungrouped) project rows. Distinct from any real group display name (a group
- * may not be named this), so it can never collide; the top-level list's order
- * is preserved exactly like a group's, and top-level rows can be reordered by
- * dragging.
+ * may not be named this), so it can never collide.
  */
 export const TOP_LEVEL_ORDER_KEY = '__topLevel__'
-
-/** Normalize a path for prefix matching: trailing slashes stripped. */
-export function normalizePath(path: string): string {
-  return path.replace(/[/\\]+$/, '')
-}

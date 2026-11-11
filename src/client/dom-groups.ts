@@ -8,20 +8,19 @@
  * and inserts group labels between them. No official row is cloned, replaced
  * or restyled.
  *
- * The grouping overlay is the same one the host half serves: manual groups,
- * per-workspace assignments, rules and rename/delete overlays are persisted in
+ * The grouping overlay is the same one the host half serves: manual groups and
+ * per-workspace assignments are persisted in
  * `$DSH_HOME/workspace-virtual-groups.manual.json`.
  */
-import type { GroupsConfig, ManualGroups } from '../core/types.ts'
+import type { ManualGroups } from '../core/types.ts'
 import { DEFAULT_GROUP, LEGACY_DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL } from '../core/types.ts'
 import {
   effectiveCategories,
   moveAfter,
   moveBefore,
-  originalRuleNameForDisplay,
   resolveCategory,
   takenCategoryNames,
-} from '../core/matcher.ts'
+} from '../core/grouping.ts'
 import css from './styles.css?inline'
 
 const MIME = 'application/x-dsh-workspace-virtual-groups'
@@ -50,7 +49,6 @@ const OFFICIAL_GROUPING_ICONS = new Set<string>(
 const OFFICIAL_GROUPING_LABELS = new Set<string>(
   Object.values(GROUPING).flatMap((entry) => entry.labels),
 )
-const CONFIG_ROUTE = '/workspace-virtual-groups/config'
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
 /** Indentation applied to project sections inside a virtual group (matches the official tree step). */
@@ -63,57 +61,50 @@ const EMPTY_MANUAL: NormalizedManual = {
   assignments: {},
   categoryOrder: [],
   workspaceOrder: {},
-  renamed: {},
-  hidden: [],
   mode: 'virtual',
-}
-
-interface WorkspaceInfo {
-  path: string
-  title: string
-}
-
-interface LoadedState {
-  config: GroupsConfig
-  manual: NormalizedManual
 }
 
 /** Materialize optional overlay fields and fold every legacy default-group spelling. */
 function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
   if (manual === undefined) return EMPTY_MANUAL
+  const categories = [...new Set(manual.categories)]
+    .filter(name => name !== DEFAULT_GROUP && name !== LEGACY_DEFAULT_GROUP)
+  const categorySet = new Set(categories)
   const assignments = Object.fromEntries(
     Object.entries(manual.assignments).map(([id, category]): [string, string | null] => [
       id,
-      category === DEFAULT_GROUP || category === LEGACY_DEFAULT_GROUP ? null : category,
+      category === null || category === DEFAULT_GROUP || category === LEGACY_DEFAULT_GROUP || !categorySet.has(category)
+        ? null
+        : category,
     ]),
   )
-  const workspaceOrder: Record<string, string[]> = { ...(manual.workspaceOrder ?? {}) }
-  for (const defaultKey of [DEFAULT_GROUP, LEGACY_DEFAULT_GROUP]) {
-    const defaultOrder = workspaceOrder[defaultKey]
-    if (defaultOrder === undefined) continue
-    workspaceOrder[TOP_LEVEL_ORDER_KEY] = defaultOrder
-    delete workspaceOrder[defaultKey]
+  const workspaceOrder: Record<string, string[]> = {}
+  for (const [key, ids] of Object.entries(manual.workspaceOrder ?? {})) {
+    const normalizedKey = key === DEFAULT_GROUP || key === LEGACY_DEFAULT_GROUP ? TOP_LEVEL_ORDER_KEY : key
+    if (normalizedKey === TOP_LEVEL_ORDER_KEY || categorySet.has(normalizedKey)) {
+      workspaceOrder[normalizedKey] = ids
+    }
   }
   return {
-    categories: manual.categories.filter(name => name !== DEFAULT_GROUP && name !== LEGACY_DEFAULT_GROUP),
+    categories,
     assignments,
-    categoryOrder: (manual.categoryOrder ?? []).filter(key => key !== DEFAULT_GROUP && key !== LEGACY_DEFAULT_GROUP),
+    categoryOrder: (manual.categoryOrder ?? []).filter(key => categorySet.has(key)),
     workspaceOrder,
-    renamed: manual.renamed ?? {},
-    hidden: manual.hidden ?? [],
     mode: manual.mode === 'official' ? 'official' : 'virtual',
   }
 }
 
-/** Fetch the rule config plus the runtime overlay in one request. */
-async function loadState(): Promise<LoadedState> {
-  const response = await fetch(CONFIG_ROUTE, { cache: 'no-cache' })
-  if (!response.ok) throw new Error(`config request failed: ${response.status}`)
-  const body = (await response.json()) as GroupsConfig & { manual?: ManualGroups }
-  return {
-    config: Array.isArray(body.categories) ? body : { categories: [] },
-    manual: normalizeManual(body.manual),
+/** Fetch the runtime overlay, tolerating an older host that only had /config. */
+async function loadState(): Promise<NormalizedManual> {
+  const response = await fetch(MANUAL_ROUTE, { cache: 'no-cache' })
+  if (response.ok) return normalizeManual((await response.json()) as ManualGroups)
+  if (response.status !== 404 && response.status !== 405) {
+    throw new Error(`manual request failed: ${response.status}`)
   }
+  const legacy = await fetch('/workspace-virtual-groups/config', { cache: 'no-cache' })
+  if (!legacy.ok) throw new Error(`manual request failed: ${response.status}`)
+  const body = (await legacy.json()) as { manual?: ManualGroups }
+  return normalizeManual(body.manual)
 }
 
 /** Persist the whole overlay. The host validates and writes atomically. */
@@ -161,10 +152,6 @@ function svgIcon(id: string, size: number): string {
  */
 export function mountWorkspaceVirtualGroups(ctx: {
   workspaces: {
-    list: {
-      getSnapshot(): { items: readonly { workspaceId: string; path: string; title: string }[] }
-      subscribe(listener: () => void): () => void
-    }
     create(input: { path: string }): Promise<{ workspaceId: string }>
   }
   uiWorkspace: {
@@ -178,7 +165,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
   document.head.append(style)
 
   let disposed = false
-  let config: GroupsConfig = { categories: [] }
   let manual: NormalizedManual = EMPTY_MANUAL
   let loaded = false
   let list: HTMLElement | null = null
@@ -199,25 +185,12 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let draggingGroup: string | null = null
   let saveQueue: Promise<void> = Promise.resolve()
   const groupedHeaders = new Map<string, HTMLElement>()
-  const workspaceMap = new Map<string, WorkspaceInfo>()
   const collapsed = readCollapsed()
   /** Official `--dsh-workspace-indent` value before this layer touched a section. */
   const originalIndent = new WeakMap<HTMLElement, string>()
   const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
   const headerActionsMeta = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
   const headerActionsTracked = new Set<HTMLElement>()
-
-  const workspaceSnapshot = () => ctx.workspaces.list.getSnapshot()
-  const workspaceInfo = (id: string): WorkspaceInfo | undefined => workspaceMap.get(id)
-
-  /** Re-read the Workspace controller snapshot into a lookup table. */
-  const syncWorkspaces = (): void => {
-    workspaceMap.clear()
-    for (const item of workspaceSnapshot().items) {
-      workspaceMap.set(item.workspaceId, { path: item.path, title: item.title })
-    }
-    schedule()
-  }
 
   /** Coalesce DOM/state notifications into one animation frame. */
   function schedule(): void {
@@ -286,7 +259,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   /** Open the create-group dialog. Shared by the repurposed header button. */
   function openCreateGroupDialog(): void {
     openNameDialog('新建分组', '', '创建', async (name) => {
-      const taken = takenCategoryNames(config, manual)
+      const taken = takenCategoryNames(manual)
       if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
       if (taken.has(name)) return '已存在同名分组'
       await persist({ ...manual, categories: [...manual.categories, name] })
@@ -621,7 +594,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function reconcile(): void {
     if (disposed) return
     // Do not render or allow edits before the overlay has loaded: persisting an
-    // empty placeholder would wipe existing groups if the config request failed.
+    // empty placeholder would wipe existing groups if the manual request failed.
     if (!loaded) {
       cleanupList()
       removeNewGroupButtons()
@@ -669,19 +642,13 @@ export function mountWorkspaceVirtualGroups(ctx: {
     const members = new Map<string, HTMLElement[]>()
     for (const section of sections) {
       const workspaceId = sectionWorkspaceId(section)
-      const info = workspaceId === undefined ? undefined : workspaceInfo(workspaceId)
-      const key = workspaceId === undefined
-        ? DEFAULT_GROUP
-        : resolveCategory(config, manual, workspaceId, info?.path ?? '', info?.title ?? '')
+      const key = workspaceId === undefined ? DEFAULT_GROUP : resolveCategory(manual, workspaceId)
       const bucket = members.get(key)
       if (bucket === undefined) members.set(key, [section])
       else bucket.push(section)
     }
 
-    const groups = effectiveCategories(config, manual)
-      .filter(entry => entry.key === DEFAULT_GROUP
-        || entry.source === 'manual'
-        || (members.get(entry.key)?.length ?? 0) > 0)
+    const groups = effectiveCategories(manual)
 
     const visible = new Set<string>()
     groups.forEach((entry, groupIndex) => {
@@ -815,7 +782,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   async function reorderGroup(draggedKey: string, targetKey: string, before: boolean): Promise<void> {
     if (draggedKey === targetKey || targetKey === DEFAULT_GROUP) return
-    const order = effectiveCategories(config, manual)
+    const order = effectiveCategories(manual)
       .map(entry => entry.key)
       .filter(key => key !== DEFAULT_GROUP)
     const categoryOrder = before
@@ -829,10 +796,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   async function moveToGroup(workspaceId: string, key: string): Promise<void> {
-    const info = workspaceInfo(workspaceId)
-    const current = info === undefined
-      ? DEFAULT_GROUP
-      : resolveCategory(config, manual, workspaceId, info.path, info.title)
+    const current = resolveCategory(manual, workspaceId)
     if (current === key) return
     collapsed.delete(key)
     writeCollapsed(collapsed)
@@ -897,7 +861,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
         openNameDialog('重命名分组', key, '重命名', async (name) => {
           if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
           if (name === key) return null
-          if (takenCategoryNames(config, manual).has(name)) return '已存在同名分组'
+          if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
           await renameGroup(key, name)
           return null
         })
@@ -949,7 +913,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   async function renameGroup(from: string, name: string): Promise<void> {
-    const originalRule = originalRuleNameForDisplay(config.categories, manual, from)
     const assignments = Object.fromEntries(
       Object.entries(manual.assignments).map(([id, category]): [string, string | null] => [
         id,
@@ -960,41 +923,30 @@ export function mountWorkspaceVirtualGroups(ctx: {
       Object.entries(manual.workspaceOrder).map(([key, ids]): [string, string[]] => [key === from ? name : key, ids]),
     )
     const categoryOrder = manual.categoryOrder.map(key => key === from ? name : key)
-    const next: NormalizedManual = {
+    await persist({
       ...manual,
+      categories: manual.categories.map(key => key === from ? name : key),
       assignments,
       workspaceOrder,
       categoryOrder,
-      ...(originalRule === undefined
-        ? { categories: manual.categories.map(key => key === from ? name : key) }
-        : { renamed: { ...manual.renamed, [originalRule]: name } }),
-    }
-    await persist(next)
+    })
   }
 
   async function deleteGroup(key: string): Promise<void> {
     if (key === DEFAULT_GROUP) return
-    const originalRule = originalRuleNameForDisplay(config.categories, manual, key)
     const assignments = { ...manual.assignments }
-    for (const [workspaceId, info] of workspaceMap) {
-      if (resolveCategory(config, manual, workspaceId, info.path, info.title) === key) assignments[workspaceId] = null
+    for (const [workspaceId, category] of Object.entries(assignments)) {
+      if (category === key) assignments[workspaceId] = null
     }
     const workspaceOrder = { ...manual.workspaceOrder }
     delete workspaceOrder[key]
-    const categoryOrder = manual.categoryOrder.filter(entry => entry !== key)
-    const next: NormalizedManual = {
+    await persist({
       ...manual,
+      categories: manual.categories.filter(entry => entry !== key),
       assignments,
       workspaceOrder,
-      categoryOrder,
-      ...(originalRule === undefined
-        ? { categories: manual.categories.filter(entry => entry !== key) }
-        : {
-            renamed: Object.fromEntries(Object.entries(manual.renamed).filter(([original]) => original !== originalRule)),
-            hidden: [...manual.hidden, originalRule],
-          }),
-    }
-    await persist(next)
+      categoryOrder: manual.categoryOrder.filter(entry => entry !== key),
+    })
   }
 
   function openNameDialog(title: string, initial: string, confirmLabel: string, submit: (name: string) => Promise<string | null>): void {
@@ -1126,20 +1078,17 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   // Initial data, then the official DOM is enhanced whenever it changes.
-  const stopWorkspaces = ctx.workspaces.list.subscribe(syncWorkspaces)
-  syncWorkspaces()
   void loadState().then((state) => {
     if (disposed) return
-    config = state.config
-    manual = state.manual
+    manual = state
     viewMode = manual.mode
     loaded = true
     schedule()
   }).catch((reason: unknown) => {
     if (disposed) return
     loaded = false
-    console.warn('workspace virtual groups: config unavailable:', reason)
-    showToast('分组配置加载失败，虚拟分组已暂时停用。请刷新重试。')
+    console.warn('workspace virtual groups: manual overlay unavailable:', reason)
+    showToast('分组数据加载失败，虚拟分组已暂时停用。请刷新重试。')
     schedule()
   })
 
@@ -1175,7 +1124,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   return () => {
     disposed = true
-    stopWorkspaces()
     observer.disconnect()
     document.removeEventListener('dragstart', onDocumentDragStart, true)
     document.removeEventListener('dragend', onDocumentDragEnd, true)

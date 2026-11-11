@@ -1,20 +1,17 @@
 /**
- * dsh-workspace-virtual-groups host half: serves the sidecar grouping config to the
- * browser half and persists the runtime grouping overlay.
+ * dsh-workspace-virtual-groups host half: serves and persists the manual
+ * grouping overlay.
  *
  * Routes:
- * - `GET /workspace-virtual-groups/config` — snapshot of the YAML rule categories
- *   merged with the runtime manual overlay (groups + assignments). Read-only
- *   for the rules; the overlay is attached so one fetch boots the browser.
- * - `PUT /workspace-virtual-groups/manual` — replace the whole manual overlay
- *   (manual groups + per-workspace overrides). Validated against the current
- *   rule categories, written atomically to the plugin-owned JSON sidecar.
+ * - `GET /workspace-virtual-groups/manual` — current manual overlay (groups +
+ *   assignments + ordering + mode), read directly from the plugin sidecar.
+ * - `PUT /workspace-virtual-groups/manual` — replace the whole overlay,
+ *   validated and written atomically to the plugin-owned JSON sidecar.
  *
  * Core workspace.json / session storage is never touched.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GroupsContext } from './context-types.ts'
-import { defaultConfigPath, readGroupsConfig } from './host-config.ts'
 import {
   defaultManualPath,
   parseManualGroups,
@@ -59,48 +56,37 @@ async function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/** Plugin body: mount the config snapshot route and the overlay write route. */
+/** Plugin body: mount the manual-overlay read/write route. */
 export function apply(ctx: GroupsContext): void {
-  const configPath = defaultConfigPath()
   const manualPath = defaultManualPath()
-
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: '/workspace-virtual-groups/config',
-    handler: async (req, res) => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        writeError(res, 405, 'method not allowed')
-        return
-      }
-      let config
-      let manual
-      try {
-        ;[config, manual] = await Promise.all([
-          readGroupsConfig(configPath),
-          readManualGroups(manualPath),
-        ])
-      } catch (error) {
-        writeError(res, 500, `workspace-virtual-groups: failed to read config: ${error instanceof Error ? error.message : String(error)}`)
-        return
-      }
-      const body = JSON.stringify({ ...config, manual })
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'Content-Length': Buffer.byteLength(body),
-      })
-      res.end(req.method === 'HEAD' ? undefined : body)
-    },
-  }), 'dsh-workspace-virtual-groups: /workspace-virtual-groups/config route')
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: '/workspace-virtual-groups/manual',
     handler: async (req, res) => {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        let manual
+        try {
+          manual = await readManualGroups(manualPath)
+        } catch (error) {
+          writeError(res, 500, `workspace-virtual-groups: failed to read manual overlay: ${error instanceof Error ? error.message : String(error)}`)
+          return
+        }
+        const body = JSON.stringify(manual)
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Content-Length': Buffer.byteLength(body),
+        })
+        res.end(req.method === 'HEAD' ? undefined : body)
+        return
+      }
+
       if (req.method !== 'PUT') {
         writeError(res, 405, 'method not allowed')
         return
       }
+
       let raw: unknown
       try {
         raw = JSON.parse(await readBody(req, MAX_MANUAL_BODY_BYTES))
@@ -109,23 +95,23 @@ export function apply(ctx: GroupsContext): void {
         writeError(res, status, `workspace-virtual-groups: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
+
       let manual
       try {
         manual = parseManualGroups(raw)
-        // The write boundary knows the current rule set; reject assignments
-        // into categories that exist nowhere (catches stale client state).
-        const ruleConfig = (await readGroupsConfig(configPath)).categories
-        validateManualGroups(manual, ruleConfig.map(category => category.name))
+        validateManualGroups(manual)
       } catch (error) {
         writeError(res, 400, `workspace-virtual-groups: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
+
       try {
         await writeManualGroups(manualPath, manual)
       } catch (error) {
         writeError(res, 500, `workspace-virtual-groups: failed to write manual overlay: ${error instanceof Error ? error.message : String(error)}`)
         return
       }
+
       const body = JSON.stringify({ ok: true })
       res.writeHead(200, {
         'Content-Type': 'application/json; charset=utf-8',
@@ -135,4 +121,32 @@ export function apply(ctx: GroupsContext): void {
       res.end(body)
     },
   }), 'dsh-workspace-virtual-groups: /workspace-virtual-groups/manual route')
+
+  // Deprecated compatibility alias for clients from before the manual-only
+  // model. It exposes no rule categories, so the removed auto-classifier is
+  // never resurrected.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/workspace-virtual-groups/config',
+    handler: async (req, res) => {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        writeError(res, 405, 'method not allowed')
+        return
+      }
+      let manual
+      try {
+        manual = await readManualGroups(manualPath)
+      } catch (error) {
+        writeError(res, 500, `workspace-virtual-groups: failed to read manual overlay: ${error instanceof Error ? error.message : String(error)}`)
+        return
+      }
+      const body = JSON.stringify({ categories: [], manual })
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Content-Length': Buffer.byteLength(body),
+      })
+      res.end(req.method === 'HEAD' ? undefined : body)
+    },
+  }), 'dsh-workspace-virtual-groups: legacy /workspace-virtual-groups/config route')
 }

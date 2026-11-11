@@ -1,19 +1,17 @@
 /**
- * Runtime grouping overlay for dsh-workspace-virtual-groups: manual groups created in
- * the sidebar UI and per-workspace category overrides. Stored in a plugin-
- * owned JSON sidecar (`$DSH_HOME/workspace-virtual-groups.manual.json`), separate from
- * the operator YAML — the YAML stays the rule source, this file only records
- * runtime decisions, and writes are atomic (temp file + fsync + rename).
+ * Runtime grouping overlay for dsh-workspace-virtual-groups: manual groups
+ * created in the sidebar UI and per-workspace assignments. Stored in a
+ * plugin-owned JSON sidecar (`$DSH_HOME/workspace-virtual-groups.manual.json`),
+ * and writes are atomic (temp file + fsync + rename).
  *
  * The browser PUT route writes the whole overlay (idempotent, last write
- * wins); reads tolerate hand-edited content (parse-only) while the write
- * boundary cross-validates against the current rule categories.
+ * wins); reads tolerate hand-edited content while the write boundary checks
+ * that assignments and ordering reference existing manual groups.
  */
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { ruleDisplayName } from './core/matcher.ts'
-import { TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type ManualGroups } from './core/types.ts'
+import { DEFAULT_GROUP, LEGACY_DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type ManualGroups } from './core/types.ts'
 
 /** Default overlay location: `$DSH_HOME/workspace-virtual-groups.manual.json`. */
 export function defaultManualPath(): string {
@@ -25,9 +23,9 @@ export function defaultManualPath(): string {
 
 /**
  * Parse + shape-validate a raw overlay document into a ManualGroups.
- * Validates types only — category references are checked against the rule set
- * at the write boundary (validateManualGroups), because reads must tolerate
- * files written while the rule set was different.
+ * Validates types only — category references are checked at the write boundary
+ * (validateManualGroups), because reads must tolerate hand-edited files or
+ * files written by an older plugin version.
  * @param raw - parsed JSON value.
  * @returns the normalized overlay.
  * @throws when the shape is malformed (non-mapping, bad names, duplicates,
@@ -51,6 +49,9 @@ export function parseManualGroups(raw: unknown): ManualGroups {
         throw new Error('workspace-virtual-groups.manual.json: each manual category must be a non-empty string')
       }
       const name = entry.trim()
+      // Older overlays occasionally stored the built-in default group as a
+      // normal category. Fold it away instead of failing the whole read.
+      if (name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP) continue
       if (name === UNCATEGORIZED_LABEL) {
         throw new Error(`workspace-virtual-groups.manual.json: manual category name "${name}" is reserved`)
       }
@@ -72,13 +73,16 @@ export function parseManualGroups(raw: unknown): ManualGroups {
         throw new Error('workspace-virtual-groups.manual.json: assignment keys must be non-empty')
       }
       if (category === null) {
-        assignments[workspaceId] = null // force uncategorized
+        assignments[workspaceId] = null
         continue
       }
       if (typeof category !== 'string' || category.trim() === '') {
         throw new Error(`workspace-virtual-groups.manual.json: assignment "${workspaceId}" must be a category name or null`)
       }
-      assignments[workspaceId] = category.trim()
+      const name = category.trim()
+      assignments[workspaceId] = name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL
+        ? null
+        : name
     }
   }
 
@@ -92,23 +96,6 @@ export function parseManualGroups(raw: unknown): ManualGroups {
 
   if (source.categoryOrder !== undefined) {
     manual.categoryOrder = parseStringList(source.categoryOrder, 'categoryOrder', true)
-  }
-  if (source.hidden !== undefined) {
-    manual.hidden = parseStringList(source.hidden, 'hidden', true)
-  }
-  if (source.renamed !== undefined) {
-    if (typeof source.renamed !== 'object' || source.renamed === null || Array.isArray(source.renamed)) {
-      throw new Error('workspace-virtual-groups.manual.json: renamed must be a mapping')
-    }
-    const renamed: Record<string, string> = {}
-    for (const [original, display] of Object.entries(source.renamed)) {
-      if (original.trim() === '') throw new Error('workspace-virtual-groups.manual.json: renamed keys must be non-empty')
-      if (typeof display !== 'string' || display.trim() === '') {
-        throw new Error(`workspace-virtual-groups.manual.json: renamed "${original}" must be a non-empty string`)
-      }
-      renamed[original] = display.trim()
-    }
-    manual.renamed = renamed
   }
   if (source.workspaceOrder !== undefined) {
     if (typeof source.workspaceOrder !== 'object' || source.workspaceOrder === null || Array.isArray(source.workspaceOrder)) {
@@ -149,47 +136,29 @@ function parseStringList(value: unknown, field: string, unique: boolean): string
 }
 
 /**
- * Cross-validate a parsed overlay against the current rule categories
- * (write boundary only). Every assignment value must be `null`, a rule
- * display name, a manual category name, or the uncategorized label; order
- * keys must reference existing categories; renames/hides must reference
- * actual rule categories.
+ * Validate that assignments and ordering reference existing manual groups
+ * (write boundary only). Legacy default labels are already folded to null by
+ * `parseManualGroups`.
  * @param manual - parsed overlay.
- * @param ruleCategoryNames - current YAML rule category original names.
- * @throws when the overlay references categories that do not exist.
+ * @throws when the overlay references groups that do not exist.
  */
-export function validateManualGroups(manual: ManualGroups, ruleCategoryNames: readonly string[]): void {
-  const ruleNames = new Set(ruleCategoryNames)
-  const allowed = new Set<string>(ruleCategoryNames.map(name => ruleDisplayName(manual, name)))
-  for (const name of manual.categories) allowed.add(name)
-  allowed.add(UNCATEGORIZED_LABEL)
-
+export function validateManualGroups(manual: ManualGroups): void {
+  const groups = new Set(manual.categories)
   for (const [workspaceId, category] of Object.entries(manual.assignments)) {
     if (category === null) continue
-    if (!allowed.has(category)) {
-      throw new Error(`workspace-virtual-groups.manual.json: assignment "${workspaceId}" references unknown category "${category}"`)
+    if (!groups.has(category)) {
+      throw new Error(`workspace-virtual-groups.manual.json: assignment "${workspaceId}" references unknown group "${category}"`)
     }
   }
   for (const key of manual.categoryOrder ?? []) {
-    if (!allowed.has(key) || key === UNCATEGORIZED_LABEL) {
-      throw new Error(`workspace-virtual-groups.manual.json: categoryOrder references unknown category "${key}"`)
+    if (!groups.has(key)) {
+      throw new Error(`workspace-virtual-groups.manual.json: categoryOrder references unknown group "${key}"`)
     }
   }
   for (const key of Object.keys(manual.workspaceOrder ?? {})) {
-    // The top-level order key is a reserved, non-category list.
     if (key === TOP_LEVEL_ORDER_KEY) continue
-    if (!allowed.has(key) || key === UNCATEGORIZED_LABEL) {
-      throw new Error(`workspace-virtual-groups.manual.json: workspaceOrder references unknown category "${key}"`)
-    }
-  }
-  for (const original of Object.keys(manual.renamed ?? {})) {
-    if (!ruleNames.has(original)) {
-      throw new Error(`workspace-virtual-groups.manual.json: renamed references unknown rule category "${original}"`)
-    }
-  }
-  for (const original of manual.hidden ?? []) {
-    if (!ruleNames.has(original)) {
-      throw new Error(`workspace-virtual-groups.manual.json: hidden references unknown rule category "${original}"`)
+    if (!groups.has(key)) {
+      throw new Error(`workspace-virtual-groups.manual.json: workspaceOrder references unknown group "${key}"`)
     }
   }
 }

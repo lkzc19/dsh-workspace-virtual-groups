@@ -1,6 +1,6 @@
 /**
- * Manual-overlay tests: shape validation, cross-validation against rule
- * categories, and the atomic file round-trip (temp dir, no host needed).
+ * Manual-overlay tests: shape validation, group-reference validation at the
+ * write boundary, and the atomic file round-trip.
  */
 import { describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
@@ -12,19 +12,23 @@ import {
   validateManualGroups,
   writeManualGroups,
 } from '../src/host-manual.ts'
-import { UNCATEGORIZED_LABEL, type ManualGroups } from '../src/core/types.ts'
-
-const RULE_NAMES = ['DSH 插件', '个人项目']
+import {
+  DEFAULT_GROUP,
+  LEGACY_DEFAULT_GROUP,
+  TOP_LEVEL_ORDER_KEY,
+  UNCATEGORIZED_LABEL,
+  type ManualGroups,
+} from '../src/core/types.ts'
 
 describe('parseManualGroups', () => {
   it('parses a valid overlay', () => {
     const parsed = parseManualGroups({
       categories: ['临时'],
-      assignments: { 'ws-1': '临时', 'ws-2': 'DSH 插件' },
+      assignments: { 'ws-1': '临时', 'ws-2': null },
     })
     expect(parsed).toEqual({
       categories: ['临时'],
-      assignments: { 'ws-1': '临时', 'ws-2': 'DSH 插件' },
+      assignments: { 'ws-1': '临时', 'ws-2': null },
     })
   })
 
@@ -44,8 +48,9 @@ describe('parseManualGroups', () => {
     expect(parseManualGroups({ categories: [' 临时 '] }).categories).toEqual(['临时'])
   })
 
-  it('rejects the reserved uncategorized label as a manual category', () => {
+  it('rejects the uncategorized name and folds default-group aliases', () => {
     expect(() => parseManualGroups({ categories: [UNCATEGORIZED_LABEL] })).toThrow(/reserved/)
+    expect(parseManualGroups({ categories: [DEFAULT_GROUP, LEGACY_DEFAULT_GROUP] }).categories).toEqual([])
   })
 
   it('rejects duplicate category names', () => {
@@ -61,11 +66,12 @@ describe('parseManualGroups', () => {
     expect(() => parseManualGroups({ assignments: { 'ws-1': 42 } })).toThrow(/category name/)
   })
 
-  it('accepts null assignment values (force uncategorized)', () => {
-    const parsed = parseManualGroups({ assignments: { 'ws-1': null } })
-    expect(parsed.assignments['ws-1']).toBeNull()
+  it('folds default/legacy/uncategorized assignments to null', () => {
+    const parsed = parseManualGroups({
+      assignments: { 'ws-1': null, 'ws-2': DEFAULT_GROUP, 'ws-3': LEGACY_DEFAULT_GROUP, 'ws-4': UNCATEGORIZED_LABEL },
+    })
+    expect(parsed.assignments).toEqual({ 'ws-1': null, 'ws-2': null, 'ws-3': null, 'ws-4': null })
   })
-
 
   it('parses the persisted view mode', () => {
     expect(parseManualGroups({ mode: 'official' }).mode).toBe('official')
@@ -74,76 +80,54 @@ describe('parseManualGroups', () => {
     expect(() => parseManualGroups({ mode: 'other' })).toThrow(/mode/)
   })
 
-  it('parses the v2 ordering/rename/hidden fields', () => {
+  it('parses ordering fields and ignores removed rule fields', () => {
     const parsed = parseManualGroups({
       categories: ['临时'],
       assignments: { 'ws-1': '临时' },
-      categoryOrder: ['临时', 'DSH 插件'],
-      workspaceOrder: { '临时': ['ws-1'] },
-      renamed: { 'DSH 插件': '插件集' },
-      hidden: ['文档'],
+      categoryOrder: ['临时'],
+      workspaceOrder: { '临时': ['ws-1'], __topLevel__: ['ws-2'] },
+      renamed: { old: 'new' },
+      hidden: ['old'],
     })
-    expect(parsed.categoryOrder).toEqual(['临时', 'DSH 插件'])
-    expect(parsed.workspaceOrder).toEqual({ '临时': ['ws-1'] })
-    expect(parsed.renamed).toEqual({ 'DSH 插件': '插件集' })
-    expect(parsed.hidden).toEqual(['文档'])
+    expect(parsed.categoryOrder).toEqual(['临时'])
+    expect(parsed.workspaceOrder).toEqual({ '临时': ['ws-1'], __topLevel__: ['ws-2'] })
+    expect(parsed).not.toHaveProperty('renamed')
+    expect(parsed).not.toHaveProperty('hidden')
   })
 
-  it('rejects duplicate categoryOrder / hidden entries', () => {
+  it('rejects duplicate categoryOrder entries', () => {
     expect(() => parseManualGroups({ categoryOrder: ['A', 'A'] })).toThrow(/duplicate/)
-    expect(() => parseManualGroups({ hidden: ['A', 'A'] })).toThrow(/duplicate/)
-  })
-
-  it('rejects non-string renamed values', () => {
-    expect(() => parseManualGroups({ renamed: { 'DSH 插件': 42 } })).toThrow(/non-empty string/)
-  })
-})
-
-describe('validateManualGroups v2 (write boundary)', () => {
-  it('accepts null assignments and renamed-display targets', () => {
-    const manual: ManualGroups = {
-      categories: ['临时'],
-      assignments: { 'ws-1': null, 'ws-2': '插件集' },
-      renamed: { 'DSH 插件': '插件集' },
-    }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).not.toThrow()
-  })
-
-  it('rejects renamed keys that are not rule categories', () => {
-    const manual: ManualGroups = { categories: [], assignments: {}, renamed: { '幽灵规则': 'X' } }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).toThrow(/renamed/)
-  })
-
-  it('rejects hidden entries that are not rule categories', () => {
-    const manual: ManualGroups = { categories: [], assignments: {}, hidden: ['幽灵规则'] }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).toThrow(/hidden/)
-  })
-
-  it('rejects categoryOrder / workspaceOrder keys that exist nowhere', () => {
-    const manual1: ManualGroups = { categories: [], assignments: {}, categoryOrder: ['幽灵'] }
-    expect(() => validateManualGroups(manual1, RULE_NAMES)).toThrow(/categoryOrder/)
-    const manual2: ManualGroups = { categories: [], assignments: {}, workspaceOrder: { '幽灵': [] } }
-    expect(() => validateManualGroups(manual2, RULE_NAMES)).toThrow(/workspaceOrder/)
-  })
-
-  it('accepts the reserved top-level order key in workspaceOrder', () => {
-    const manual: ManualGroups = { categories: [], assignments: {}, workspaceOrder: { __topLevel__: ['ws-1', 'ws-2'] } }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).not.toThrow()
   })
 })
 
 describe('validateManualGroups (write boundary)', () => {
-  it('accepts assignments into rule, manual, and uncategorized categories', () => {
+  it('accepts null assignments and assignments to manual groups', () => {
     const manual: ManualGroups = {
       categories: ['临时'],
-      assignments: { 'ws-1': '临时', 'ws-2': 'DSH 插件', 'ws-3': UNCATEGORIZED_LABEL },
+      assignments: { 'ws-1': null, 'ws-2': '临时' },
     }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).not.toThrow()
+    expect(() => validateManualGroups(manual)).not.toThrow()
   })
 
-  it('rejects an assignment into a category that exists nowhere', () => {
+  it('rejects an assignment into a group that does not exist', () => {
     const manual: ManualGroups = { categories: [], assignments: { 'ws-1': '幽灵分组' } }
-    expect(() => validateManualGroups(manual, RULE_NAMES)).toThrow(/unknown category/)
+    expect(() => validateManualGroups(manual)).toThrow(/unknown group/)
+  })
+
+  it('rejects categoryOrder / workspaceOrder keys that do not exist', () => {
+    const manual1: ManualGroups = { categories: [], assignments: {}, categoryOrder: ['幽灵'] }
+    expect(() => validateManualGroups(manual1)).toThrow(/categoryOrder/)
+    const manual2: ManualGroups = { categories: [], assignments: {}, workspaceOrder: { '幽灵': [] } }
+    expect(() => validateManualGroups(manual2)).toThrow(/workspaceOrder/)
+  })
+
+  it('accepts the reserved top-level order key in workspaceOrder', () => {
+    const manual: ManualGroups = {
+      categories: [],
+      assignments: {},
+      workspaceOrder: { [TOP_LEVEL_ORDER_KEY]: ['ws-1', 'ws-2'] },
+    }
+    expect(() => validateManualGroups(manual)).not.toThrow()
   })
 })
 
@@ -163,11 +147,13 @@ describe('manual file round-trip', () => {
     try {
       const overlay: ManualGroups = {
         categories: ['临时'],
-        assignments: { 'ws-1': '临时', 'ws-2': 'DSH 插件' },
+        assignments: { 'ws-1': '临时', 'ws-2': null },
+        categoryOrder: ['临时'],
+        workspaceOrder: { '临时': ['ws-1'], [TOP_LEVEL_ORDER_KEY]: ['ws-2'] },
+        mode: 'official',
       }
       await writeManualGroups(path, overlay)
       expect(await readManualGroups(path)).toEqual(overlay)
-      // The persisted file is valid JSON with a trailing newline.
       const text = await readFile(path, 'utf8')
       expect(JSON.parse(text)).toEqual(overlay)
       expect(text.endsWith('\n')).toBe(true)
