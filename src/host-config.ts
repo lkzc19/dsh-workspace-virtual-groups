@@ -77,7 +77,7 @@ export function parseGroupsConfig(raw: unknown): GroupsConfig {
 
 /**
  * Read + parse the sidecar config file. A missing file yields an empty config
- * (all workspaces fall into the built-in 默认工作区 group); malformed YAML
+ * (all workspaces fall into the built-in 默认 group); malformed YAML
  * throws so the operator sees the problem instead of silently ungrouping
  * everything.
  */

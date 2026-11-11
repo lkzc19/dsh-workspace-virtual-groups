@@ -104,7 +104,14 @@ export const UNCATEGORIZED_LABEL = '未分类'
  * group's project order is stored under `TOP_LEVEL_ORDER_KEY` because the host
  * validates `workspaceOrder` keys against real categories only.
  */
-export const DEFAULT_GROUP = '默认工作区'
+export const DEFAULT_GROUP = '默认'
+
+/**
+ * Previous name of the built-in default group. Older overlays may still carry
+ * this label in categories/assignments/orders; reads fold it into
+ * `DEFAULT_GROUP` so existing data keeps landing in the default group.
+ */
+export const LEGACY_DEFAULT_GROUP = '默认工作区'
 
 /**
  * Reserved key under `workspaceOrder` holding the manual order of TOP-LEVEL

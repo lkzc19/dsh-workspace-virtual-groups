@@ -1,7 +1,7 @@
 {
   "name": "dsh-workspace-virtual-groups",
   "version": "0.1.0",
-  "description": "Virtual workspace groups for the DSH web sidebar: a built-in 默认工作区 default group, group create/rename/delete, drag-and-drop project grouping and ordering.",
+  "description": "Virtual workspace groups for the DSH web sidebar: a built-in 默认 default group, group create/rename/delete, drag-and-drop project grouping and ordering.",
   "keywords": [
     "dsh",
     "deepseek-harness",

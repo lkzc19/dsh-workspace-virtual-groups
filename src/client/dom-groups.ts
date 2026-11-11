@@ -13,7 +13,7 @@
  * `$DSH_HOME/workspace-virtual-groups.manual.json`.
  */
 import type { GroupsConfig, ManualGroups } from '../core/types.ts'
-import { DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL } from '../core/types.ts'
+import { DEFAULT_GROUP, LEGACY_DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL } from '../core/types.ts'
 import {
   effectiveCategories,
   moveAfter,
@@ -59,19 +59,20 @@ function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
   const assignments = Object.fromEntries(
     Object.entries(manual.assignments).map(([id, category]): [string, string | null] => [
       id,
-      category === DEFAULT_GROUP ? null : category,
+      category === DEFAULT_GROUP || category === LEGACY_DEFAULT_GROUP ? null : category,
     ]),
   )
   const workspaceOrder: Record<string, string[]> = { ...(manual.workspaceOrder ?? {}) }
-  const defaultOrder = workspaceOrder[DEFAULT_GROUP]
-  if (defaultOrder !== undefined) {
+  for (const defaultKey of [DEFAULT_GROUP, LEGACY_DEFAULT_GROUP]) {
+    const defaultOrder = workspaceOrder[defaultKey]
+    if (defaultOrder === undefined) continue
     workspaceOrder[TOP_LEVEL_ORDER_KEY] = defaultOrder
-    delete workspaceOrder[DEFAULT_GROUP]
+    delete workspaceOrder[defaultKey]
   }
   return {
-    categories: manual.categories.filter(name => name !== DEFAULT_GROUP),
+    categories: manual.categories.filter(name => name !== DEFAULT_GROUP && name !== LEGACY_DEFAULT_GROUP),
     assignments,
-    categoryOrder: (manual.categoryOrder ?? []).filter(key => key !== DEFAULT_GROUP),
+    categoryOrder: (manual.categoryOrder ?? []).filter(key => key !== DEFAULT_GROUP && key !== LEGACY_DEFAULT_GROUP),
     workspaceOrder,
     renamed: manual.renamed ?? {},
     hidden: manual.hidden ?? [],
@@ -268,7 +269,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
         event.stopPropagation()
         openNameDialog('新建分组', '', '创建', async (name) => {
           const taken = takenCategoryNames(config, manual)
-          if (name === '' || name === DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
+          if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
           if (taken.has(name)) return '已存在同名分组'
           await persist({ ...manual, categories: [...manual.categories, name] })
           return null
@@ -550,7 +551,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     rename.addEventListener('click', () => {
       closeMenu()
       openNameDialog('重命名分组', key, '重命名', async (name) => {
-        if (name === '' || name === DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
+        if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
         if (name === key) return null
         if (takenCategoryNames(config, manual).has(name)) return '已存在同名分组'
         await renameGroup(key, name)

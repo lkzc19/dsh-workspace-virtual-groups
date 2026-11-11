@@ -13,6 +13,7 @@
 import {
   normalizePath,
   DEFAULT_GROUP,
+  LEGACY_DEFAULT_GROUP,
   TOP_LEVEL_ORDER_KEY,
   UNCATEGORIZED_LABEL,
   type GroupCategory,
@@ -93,7 +94,7 @@ export function effectiveCategories(
   // part of the persisted overlay (so it can never be renamed or deleted); a
   // rule or manual group that happens to use its name is folded into it.
   const entries: EffectiveCategory[] = [{ key: DEFAULT_GROUP, source: 'builtin' }]
-  const seen = new Set<string>([DEFAULT_GROUP])
+  const seen = new Set<string>([DEFAULT_GROUP, LEGACY_DEFAULT_GROUP])
   for (const category of config.categories) {
     if (isHiddenRule(manual, category.name)) continue
     const key = ruleDisplayName(manual, category.name)
@@ -147,12 +148,14 @@ export function resolveCategory(
   const override = manual?.assignments[workspaceId]
   if (override !== undefined) {
     if (override === null) return DEFAULT_GROUP
+    if (override === LEGACY_DEFAULT_GROUP) return DEFAULT_GROUP
     return displayCategoryKeys(config, manual).includes(override) ? override : DEFAULT_GROUP
   }
   const matched = classify(config.categories, path, title)
   if (matched === undefined) return DEFAULT_GROUP
   if (isHiddenRule(manual, matched.name)) return DEFAULT_GROUP
-  return ruleDisplayName(manual, matched.name)
+  const display = ruleDisplayName(manual, matched.name)
+  return display === LEGACY_DEFAULT_GROUP ? DEFAULT_GROUP : display
 }
 
 /** Whether a category key is a manual-only group (manageable via list). */
@@ -174,6 +177,7 @@ export function takenCategoryNames(config: GroupsConfig, manual: ManualGroups | 
   const taken = new Set<string>(displayCategoryKeys(config, manual))
   taken.add(UNCATEGORIZED_LABEL)
   taken.add(DEFAULT_GROUP)
+  taken.add(LEGACY_DEFAULT_GROUP)
   return taken
 }
 
@@ -187,7 +191,7 @@ export function orderedWorkspaceIds(
   categoryKey: string,
   members: readonly string[],
 ): string[] {
-  const stored = manual?.workspaceOrder?.[categoryKey === DEFAULT_GROUP ? TOP_LEVEL_ORDER_KEY : categoryKey]
+  const stored = manual?.workspaceOrder?.[categoryKey === DEFAULT_GROUP || categoryKey === LEGACY_DEFAULT_GROUP ? TOP_LEVEL_ORDER_KEY : categoryKey]
   if (stored === undefined || stored.length === 0) return [...members]
   const memberSet = new Set(members)
   const ordered: string[] = []
