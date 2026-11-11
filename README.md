@@ -13,14 +13,14 @@
 
 ## 安装
 
-从 GitHub 安装，替换 `<你的用户名>`：
+从 GitHub 安装：
 
 ```sh
 # 桌面端
-dsh plugin --profile desktop add "https://github.com/<你的用户名>/dsh-workspace-virtual-groups.git"
+dsh plugin --profile desktop add "https://github.com/lkzc19/dsh-workspace-virtual-groups.git"
 
 # Web / CLI
-dsh plugin --profile web add "https://github.com/<你的用户名>/dsh-workspace-virtual-groups.git"
+dsh plugin --profile web add "https://github.com/lkzc19/dsh-workspace-virtual-groups.git"
 ```
 
 安装后重启桌面端或对应的 `dsh web` 进程。`lib/` 已提交，安装不需要构建。

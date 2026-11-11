@@ -53,5 +53,13 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lkzc19/dsh-workspace-virtual-groups.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lkzc19/dsh-workspace-virtual-groups/issues"
+  },
+  "homepage": "https://github.com/lkzc19/dsh-workspace-virtual-groups#readme"
 }
