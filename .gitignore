@@ -3,3 +3,4 @@ node_modules/
 .dsh-*/
 *.tgz
 .DS_Store
+lib/

@@ -45,6 +45,7 @@
   },
   "scripts": {
     "build": "node scripts/build-host.mjs && node scripts/build-client.mjs",
+    "prepare": "npm run build",
     "test": "vitest run"
   },
   "devDependencies": {
