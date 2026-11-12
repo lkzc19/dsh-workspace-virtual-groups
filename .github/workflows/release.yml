@@ -1,0 +1,42 @@
+name: release
+
+# 打 v* 标签即发布到 npm；版本号以 package.json 为准，标签必须与之相等。
+# 认证走 npm Trusted Publishing（OIDC），无需 NPM_TOKEN。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write # OIDC（trusted publishing + provenance）
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # trusted publishing 要求 npm >= 11.5.1
+      - run: npm install -g npm@11
+
+      # prepare 在 npm ci 时构建 lib/
+      - run: npm ci
+      - run: npm test
+
+      - name: 标签与版本一致
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "标签 v$tag 与 package.json 的 $version 不一致" >&2
+            exit 1
+          fi
+
+      - run: npm publish
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
