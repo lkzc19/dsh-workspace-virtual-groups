@@ -1,4 +1,4 @@
-# dsh-workspace-virtual-groups
+# @lkzc19/dsh-workspace-virtual-groups
 
 给 DSH 侧边栏的工作区列表加一层**手动虚拟分组**。项目仍在原目录，插件只改变显示归属和顺序。
 
@@ -13,28 +13,25 @@
 
 ## 安装
 
-`lib/` 是构建产物，不进仓库。先克隆并构建，再从本地目录安装：
+```sh
+dsh plugin --profile desktop add @lkzc19/dsh-workspace-virtual-groups
+```
+
+从源码安装（`lib/` 是构建产物，不入库，需先构建）：
 
 ```sh
 git clone https://github.com/lkzc19/dsh-workspace-virtual-groups.git
 cd dsh-workspace-virtual-groups
-npm install   # prepare 会自动执行 npm run build
-
-# 桌面端
+npm install
 dsh plugin --profile desktop add "$PWD"
-
-# Web / CLI
-dsh plugin --profile web add "$PWD"
 ```
 
-安装后重启桌面端或对应的 `dsh web` 进程。
-
-> 不要从 GitHub URL 直接安装（`dsh plugin add https://github.com/...`）：pnpm 会拒绝为 git 依赖执行 `prepare`（`ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`），装进来的是一份没有 `lib/` 的源码。
+安装后重启桌面端或对应的 `dsh web` 进程。git URL 直装不可用：pnpm 不对 git 依赖执行 `prepare`，拿到的源码没有 `lib/`。
 
 卸载：
 
 ```sh
-dsh plugin --profile desktop remove dsh-workspace-virtual-groups
+dsh plugin --profile desktop remove @lkzc19/dsh-workspace-virtual-groups
 ```
 
 ## 使用
@@ -61,12 +58,12 @@ $DSH_HOME/workspace-virtual-groups.manual.json
 ## 开发
 
 ```sh
-npm install   # 装依赖并自动构建（prepare）
+npm install   # 装依赖并构建
 npm run build
 npm test
 ```
 
-`lib/index.js`（Host）和 `lib/client.js`（Client）是构建产物，已被 `.gitignore` 忽略，不要提交。
+产物：Host `lib/index.js`，Client `lib/client.js`。`lib/` 已 gitignore。
 
 ## 许可证
 

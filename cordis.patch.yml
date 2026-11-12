@@ -8,5 +8,5 @@
 # merges this patch (one insert of the plugin row).
 - insert:
     - id: workspace-virtual-groups
-      name: 'dsh-workspace-virtual-groups'
+      name: '@lkzc19/dsh-workspace-virtual-groups'
       config: {}

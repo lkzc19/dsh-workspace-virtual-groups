@@ -250,19 +250,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Undo the old 0.1.x repurposing of the official add-workspace button. */
-  function restoreLegacyAddButton(): void {
-    document.querySelectorAll<HTMLButtonElement>('button[data-wvg-add-group]').forEach((button) => {
-      delete button.dataset.wvgAddGroup
-      button.setAttribute('aria-label', '添加工作区')
-      button.setAttribute('aria-keyshortcuts', 'Alt+Meta+O')
-      const svg = button.querySelector('svg')
-      const use = button.querySelector('use')
-      if (svg !== null) svg.setAttribute('data-icon', 'dsw-icon-project-add-outline-regular')
-      if (use !== null) use.setAttribute('href', '#dsw-icon-project-add-outline-regular')
-    })
-  }
-
   function officialAddButton(): HTMLButtonElement | null {
     const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-project-add-outline-regular"]')
     const button = use?.closest('button')
@@ -292,7 +279,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   /** The layer-icon button next to the official add-workspace button. */
   function ensureNewGroupButton(): void {
-    restoreLegacyAddButton()
     if (viewMode !== 'virtual') {
       removeNewGroupButtons()
       return
@@ -303,16 +289,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
       return
     }
     let button = document.querySelector<HTMLButtonElement>('button[data-wvg-new-group]')
-    if (button !== null && button.dataset.wvgVersion !== '2') {
-      const oldActions = button.parentElement
-      button.remove()
-      restoreHeaderActions(oldActions)
-      button = null
-    }
     if (button === null || !button.isConnected) {
       button = add.cloneNode(true) as HTMLButtonElement
       button.dataset.wvgNewGroup = '1'
-      button.dataset.wvgVersion = '2'
       add.after(button)
     }
     if (button.previousElementSibling !== add) add.after(button)
@@ -1109,7 +1088,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
     closeViewOptions()
     closeModal()
     cleanupList()
-    restoreLegacyAddButton()
     removeNewGroupButtons()
     document.querySelectorAll('[data-wvg-view-wrap]').forEach((node) => node.remove())
     style.remove()

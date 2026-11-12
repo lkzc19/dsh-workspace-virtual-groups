@@ -21,7 +21,7 @@ import {
 } from './host-manual.ts'
 
 /** Plugin identity for cordis.yml rows. */
-export const name = 'dsh-workspace-virtual-groups'
+export const name = '@lkzc19/dsh-workspace-virtual-groups'
 
 /** Services required before mounting: the webserver route. */
 export const inject = ['webServer']
