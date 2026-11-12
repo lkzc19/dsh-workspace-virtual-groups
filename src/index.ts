@@ -121,32 +121,4 @@ export function apply(ctx: GroupsContext): void {
       res.end(body)
     },
   }), 'dsh-workspace-virtual-groups: /workspace-virtual-groups/manual route')
-
-  // Deprecated compatibility alias for clients from before the manual-only
-  // model. It exposes no rule categories, so the removed auto-classifier is
-  // never resurrected.
-  ctx.effect(() => ctx.webServer.register({
-    kind: 'exact',
-    path: '/workspace-virtual-groups/config',
-    handler: async (req, res) => {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        writeError(res, 405, 'method not allowed')
-        return
-      }
-      let manual
-      try {
-        manual = await readManualGroups(manualPath)
-      } catch (error) {
-        writeError(res, 500, `workspace-virtual-groups: failed to read manual overlay: ${error instanceof Error ? error.message : String(error)}`)
-        return
-      }
-      const body = JSON.stringify({ categories: [], manual })
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'Content-Length': Buffer.byteLength(body),
-      })
-      res.end(req.method === 'HEAD' ? undefined : body)
-    },
-  }), 'dsh-workspace-virtual-groups: legacy /workspace-virtual-groups/config route')
 }

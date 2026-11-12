@@ -12,13 +12,7 @@ import {
   validateManualGroups,
   writeManualGroups,
 } from '../src/host-manual.ts'
-import {
-  DEFAULT_GROUP,
-  LEGACY_DEFAULT_GROUP,
-  TOP_LEVEL_ORDER_KEY,
-  UNCATEGORIZED_LABEL,
-  type ManualGroups,
-} from '../src/core/types.ts'
+import { DEFAULT_GROUP, type ManualGroups } from '../src/core/types.ts'
 
 describe('parseManualGroups', () => {
   it('parses a valid overlay', () => {
@@ -48,9 +42,8 @@ describe('parseManualGroups', () => {
     expect(parseManualGroups({ categories: [' 临时 '] }).categories).toEqual(['临时'])
   })
 
-  it('rejects the uncategorized name and folds default-group aliases', () => {
-    expect(() => parseManualGroups({ categories: [UNCATEGORIZED_LABEL] })).toThrow(/reserved/)
-    expect(parseManualGroups({ categories: [DEFAULT_GROUP, LEGACY_DEFAULT_GROUP] }).categories).toEqual([])
+  it('rejects the built-in group name', () => {
+    expect(() => parseManualGroups({ categories: [DEFAULT_GROUP] })).toThrow(/reserved/)
   })
 
   it('rejects duplicate category names', () => {
@@ -66,11 +59,9 @@ describe('parseManualGroups', () => {
     expect(() => parseManualGroups({ assignments: { 'ws-1': 42 } })).toThrow(/category name/)
   })
 
-  it('folds default/legacy/uncategorized assignments to null', () => {
-    const parsed = parseManualGroups({
-      assignments: { 'ws-1': null, 'ws-2': DEFAULT_GROUP, 'ws-3': LEGACY_DEFAULT_GROUP, 'ws-4': UNCATEGORIZED_LABEL },
-    })
-    expect(parsed.assignments).toEqual({ 'ws-1': null, 'ws-2': null, 'ws-3': null, 'ws-4': null })
+  it('keeps assignment values verbatim and trims them', () => {
+    const parsed = parseManualGroups({ assignments: { 'ws-1': null, 'ws-2': ' 临时 ' } })
+    expect(parsed.assignments).toEqual({ 'ws-1': null, 'ws-2': '临时' })
   })
 
   it('parses the persisted view mode', () => {
@@ -80,17 +71,17 @@ describe('parseManualGroups', () => {
     expect(() => parseManualGroups({ mode: 'other' })).toThrow(/mode/)
   })
 
-  it('parses ordering fields and ignores removed rule fields', () => {
+  it('parses categoryOrder and ignores unknown fields', () => {
     const parsed = parseManualGroups({
       categories: ['临时'],
       assignments: { 'ws-1': '临时' },
       categoryOrder: ['临时'],
-      workspaceOrder: { '临时': ['ws-1'], __topLevel__: ['ws-2'] },
+      workspaceOrder: { '临时': ['ws-1'] },
       renamed: { old: 'new' },
       hidden: ['old'],
     })
     expect(parsed.categoryOrder).toEqual(['临时'])
-    expect(parsed.workspaceOrder).toEqual({ '临时': ['ws-1'], __topLevel__: ['ws-2'] })
+    expect(parsed).not.toHaveProperty('workspaceOrder')
     expect(parsed).not.toHaveProperty('renamed')
     expect(parsed).not.toHaveProperty('hidden')
   })
@@ -114,20 +105,9 @@ describe('validateManualGroups (write boundary)', () => {
     expect(() => validateManualGroups(manual)).toThrow(/unknown group/)
   })
 
-  it('rejects categoryOrder / workspaceOrder keys that do not exist', () => {
-    const manual1: ManualGroups = { categories: [], assignments: {}, categoryOrder: ['幽灵'] }
-    expect(() => validateManualGroups(manual1)).toThrow(/categoryOrder/)
-    const manual2: ManualGroups = { categories: [], assignments: {}, workspaceOrder: { '幽灵': [] } }
-    expect(() => validateManualGroups(manual2)).toThrow(/workspaceOrder/)
-  })
-
-  it('accepts the reserved top-level order key in workspaceOrder', () => {
-    const manual: ManualGroups = {
-      categories: [],
-      assignments: {},
-      workspaceOrder: { [TOP_LEVEL_ORDER_KEY]: ['ws-1', 'ws-2'] },
-    }
-    expect(() => validateManualGroups(manual)).not.toThrow()
+  it('rejects categoryOrder entries that do not exist', () => {
+    const manual: ManualGroups = { categories: [], assignments: {}, categoryOrder: ['幽灵'] }
+    expect(() => validateManualGroups(manual)).toThrow(/categoryOrder/)
   })
 })
 
@@ -149,7 +129,6 @@ describe('manual file round-trip', () => {
         categories: ['临时'],
         assignments: { 'ws-1': '临时', 'ws-2': null },
         categoryOrder: ['临时'],
-        workspaceOrder: { '临时': ['ws-1'], [TOP_LEVEL_ORDER_KEY]: ['ws-2'] },
         mode: 'official',
       }
       await writeManualGroups(path, overlay)

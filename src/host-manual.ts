@@ -5,13 +5,13 @@
  * and writes are atomic (temp file + fsync + rename).
  *
  * The browser PUT route writes the whole overlay (idempotent, last write
- * wins); reads tolerate hand-edited content while the write boundary checks
- * that assignments and ordering reference existing manual groups.
+ * wins); reads tolerate unknown fields while the write boundary checks that
+ * assignments and ordering reference existing manual groups.
  */
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { DEFAULT_GROUP, LEGACY_DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL, type ManualGroups } from './core/types.ts'
+import { DEFAULT_GROUP, type ManualGroups } from './core/types.ts'
 
 /** Default overlay location: `$DSH_HOME/workspace-virtual-groups.manual.json`. */
 export function defaultManualPath(): string {
@@ -24,12 +24,11 @@ export function defaultManualPath(): string {
 /**
  * Parse + shape-validate a raw overlay document into a ManualGroups.
  * Validates types only — category references are checked at the write boundary
- * (validateManualGroups), because reads must tolerate hand-edited files or
- * files written by an older plugin version.
+ * (validateManualGroups), because reads must tolerate hand-edited files.
  * @param raw - parsed JSON value.
  * @returns the normalized overlay.
  * @throws when the shape is malformed (non-mapping, bad names, duplicates,
- * the reserved uncategorized label, bad assignment/order values).
+ * the built-in group name, bad assignment values).
  */
 export function parseManualGroups(raw: unknown): ManualGroups {
   if (raw === undefined || raw === null) return { categories: [], assignments: {} }
@@ -49,11 +48,8 @@ export function parseManualGroups(raw: unknown): ManualGroups {
         throw new Error('workspace-virtual-groups.manual.json: each manual category must be a non-empty string')
       }
       const name = entry.trim()
-      // Older overlays occasionally stored the built-in default group as a
-      // normal category. Fold it away instead of failing the whole read.
-      if (name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP) continue
-      if (name === UNCATEGORIZED_LABEL) {
-        throw new Error(`workspace-virtual-groups.manual.json: manual category name "${name}" is reserved`)
+      if (name === DEFAULT_GROUP) {
+        throw new Error(`workspace-virtual-groups.manual.json: the built-in group "${name}" is reserved`)
       }
       if (seen.has(name)) {
         throw new Error(`workspace-virtual-groups.manual.json: duplicate manual category "${name}"`)
@@ -79,10 +75,7 @@ export function parseManualGroups(raw: unknown): ManualGroups {
       if (typeof category !== 'string' || category.trim() === '') {
         throw new Error(`workspace-virtual-groups.manual.json: assignment "${workspaceId}" must be a category name or null`)
       }
-      const name = category.trim()
-      assignments[workspaceId] = name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL
-        ? null
-        : name
+      assignments[workspaceId] = category.trim()
     }
   }
 
@@ -93,29 +86,15 @@ export function parseManualGroups(raw: unknown): ManualGroups {
     }
     manual.mode = source.mode
   }
-
   if (source.categoryOrder !== undefined) {
-    manual.categoryOrder = parseStringList(source.categoryOrder, 'categoryOrder', true)
-  }
-  if (source.workspaceOrder !== undefined) {
-    if (typeof source.workspaceOrder !== 'object' || source.workspaceOrder === null || Array.isArray(source.workspaceOrder)) {
-      throw new Error('workspace-virtual-groups.manual.json: workspaceOrder must be a mapping')
-    }
-    const workspaceOrder: Record<string, string[]> = {}
-    for (const [categoryKey, ids] of Object.entries(source.workspaceOrder)) {
-      if (categoryKey.trim() === '') {
-        throw new Error('workspace-virtual-groups.manual.json: workspaceOrder keys must be non-empty')
-      }
-      workspaceOrder[categoryKey] = parseStringList(ids, `workspaceOrder["${categoryKey}"]`, true)
-    }
-    manual.workspaceOrder = workspaceOrder
+    manual.categoryOrder = parseStringList(source.categoryOrder, 'categoryOrder')
   }
 
   return manual
 }
 
-/** Parse a list of non-empty strings, optionally de-duplicated. */
-function parseStringList(value: unknown, field: string, unique: boolean): string[] {
+/** Parse a list of unique, non-empty strings. */
+function parseStringList(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) {
     throw new Error(`workspace-virtual-groups.manual.json: ${field} must be a list`)
   }
@@ -126,7 +105,7 @@ function parseStringList(value: unknown, field: string, unique: boolean): string
       throw new Error(`workspace-virtual-groups.manual.json: ${field} entries must be non-empty strings`)
     }
     const trimmed = entry.trim()
-    if (unique && seen.has(trimmed)) {
+    if (seen.has(trimmed)) {
       throw new Error(`workspace-virtual-groups.manual.json: ${field} has duplicate entry "${trimmed}"`)
     }
     seen.add(trimmed)
@@ -137,8 +116,7 @@ function parseStringList(value: unknown, field: string, unique: boolean): string
 
 /**
  * Validate that assignments and ordering reference existing manual groups
- * (write boundary only). Legacy default labels are already folded to null by
- * `parseManualGroups`.
+ * (write boundary only).
  * @param manual - parsed overlay.
  * @throws when the overlay references groups that do not exist.
  */
@@ -153,12 +131,6 @@ export function validateManualGroups(manual: ManualGroups): void {
   for (const key of manual.categoryOrder ?? []) {
     if (!groups.has(key)) {
       throw new Error(`workspace-virtual-groups.manual.json: categoryOrder references unknown group "${key}"`)
-    }
-  }
-  for (const key of Object.keys(manual.workspaceOrder ?? {})) {
-    if (key === TOP_LEVEL_ORDER_KEY) continue
-    if (!groups.has(key)) {
-      throw new Error(`workspace-virtual-groups.manual.json: workspaceOrder references unknown group "${key}"`)
     }
   }
 }

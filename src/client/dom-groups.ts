@@ -13,7 +13,7 @@
  * `$DSH_HOME/workspace-virtual-groups.manual.json`.
  */
 import type { ManualGroups } from '../core/types.ts'
-import { DEFAULT_GROUP, LEGACY_DEFAULT_GROUP, TOP_LEVEL_ORDER_KEY, UNCATEGORIZED_LABEL } from '../core/types.ts'
+import { DEFAULT_GROUP } from '../core/types.ts'
 import {
   effectiveCategories,
   moveAfter,
@@ -60,51 +60,34 @@ const EMPTY_MANUAL: NormalizedManual = {
   categories: [],
   assignments: {},
   categoryOrder: [],
-  workspaceOrder: {},
   mode: 'virtual',
 }
 
-/** Materialize optional overlay fields and fold every legacy default-group spelling. */
+/** Materialize optional overlay fields into the fully-populated client shape. */
 function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
   if (manual === undefined) return EMPTY_MANUAL
   const categories = [...new Set(manual.categories)]
-    .filter(name => name !== DEFAULT_GROUP && name !== LEGACY_DEFAULT_GROUP)
+    .filter(name => name !== DEFAULT_GROUP)
   const categorySet = new Set(categories)
   const assignments = Object.fromEntries(
     Object.entries(manual.assignments).map(([id, category]): [string, string | null] => [
       id,
-      category === null || category === DEFAULT_GROUP || category === LEGACY_DEFAULT_GROUP || !categorySet.has(category)
-        ? null
-        : category,
+      category === null || !categorySet.has(category) ? null : category,
     ]),
   )
-  const workspaceOrder: Record<string, string[]> = {}
-  for (const [key, ids] of Object.entries(manual.workspaceOrder ?? {})) {
-    const normalizedKey = key === DEFAULT_GROUP || key === LEGACY_DEFAULT_GROUP ? TOP_LEVEL_ORDER_KEY : key
-    if (normalizedKey === TOP_LEVEL_ORDER_KEY || categorySet.has(normalizedKey)) {
-      workspaceOrder[normalizedKey] = ids
-    }
-  }
   return {
     categories,
     assignments,
     categoryOrder: (manual.categoryOrder ?? []).filter(key => categorySet.has(key)),
-    workspaceOrder,
     mode: manual.mode === 'official' ? 'official' : 'virtual',
   }
 }
 
-/** Fetch the runtime overlay, tolerating an older host that only had /config. */
+/** Fetch the runtime overlay. */
 async function loadState(): Promise<NormalizedManual> {
   const response = await fetch(MANUAL_ROUTE, { cache: 'no-cache' })
-  if (response.ok) return normalizeManual((await response.json()) as ManualGroups)
-  if (response.status !== 404 && response.status !== 405) {
-    throw new Error(`manual request failed: ${response.status}`)
-  }
-  const legacy = await fetch('/workspace-virtual-groups/config', { cache: 'no-cache' })
-  if (!legacy.ok) throw new Error(`manual request failed: ${response.status}`)
-  const body = (await legacy.json()) as { manual?: ManualGroups }
-  return normalizeManual(body.manual)
+  if (!response.ok) throw new Error(`manual request failed: ${response.status}`)
+  return normalizeManual((await response.json()) as ManualGroups)
 }
 
 /** Persist the whole overlay. The host validates and writes atomically. */
@@ -260,7 +243,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function openCreateGroupDialog(): void {
     openNameDialog('新建分组', '', '创建', async (name) => {
       const taken = takenCategoryNames(manual)
-      if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
+      if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
       if (taken.has(name)) return '已存在同名分组'
       await persist({ ...manual, categories: [...manual.categories, name] })
       return null
@@ -859,7 +842,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       rename.addEventListener('click', () => {
         closeMenu()
         openNameDialog('重命名分组', key, '重命名', async (name) => {
-          if (name === '' || name === DEFAULT_GROUP || name === LEGACY_DEFAULT_GROUP || name === UNCATEGORIZED_LABEL) return '该名称不可用'
+          if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
           if (name === key) return null
           if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
           await renameGroup(key, name)
@@ -919,15 +902,11 @@ export function mountWorkspaceVirtualGroups(ctx: {
         category === from ? name : category,
       ]),
     )
-    const workspaceOrder = Object.fromEntries(
-      Object.entries(manual.workspaceOrder).map(([key, ids]): [string, string[]] => [key === from ? name : key, ids]),
-    )
     const categoryOrder = manual.categoryOrder.map(key => key === from ? name : key)
     await persist({
       ...manual,
       categories: manual.categories.map(key => key === from ? name : key),
       assignments,
-      workspaceOrder,
       categoryOrder,
     })
   }
@@ -938,13 +917,10 @@ export function mountWorkspaceVirtualGroups(ctx: {
     for (const [workspaceId, category] of Object.entries(assignments)) {
       if (category === key) assignments[workspaceId] = null
     }
-    const workspaceOrder = { ...manual.workspaceOrder }
-    delete workspaceOrder[key]
     await persist({
       ...manual,
       categories: manual.categories.filter(entry => entry !== key),
       assignments,
-      workspaceOrder,
       categoryOrder: manual.categoryOrder.filter(entry => entry !== key),
     })
   }
