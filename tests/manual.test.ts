@@ -89,6 +89,13 @@ describe('parseManualGroups', () => {
   it('rejects duplicate categoryOrder entries', () => {
     expect(() => parseManualGroups({ categoryOrder: ['A', 'A'] })).toThrow(/duplicate/)
   })
+
+  it('parses the parent map, including the built-in group as a parent', () => {
+    const parsed = parseManualGroups({ categories: ['A', 'B'], parents: { B: 'A', A: DEFAULT_GROUP } })
+    expect(parsed.parents).toEqual({ B: 'A', A: DEFAULT_GROUP })
+    expect(() => parseManualGroups({ parents: { [DEFAULT_GROUP]: 'A' } })).toThrow(/cannot be nested/)
+    expect(() => parseManualGroups({ parents: { A: '' } })).toThrow(/group name/)
+  })
 })
 
 describe('validateManualGroups (write boundary)', () => {
@@ -109,6 +116,27 @@ describe('validateManualGroups (write boundary)', () => {
     const manual: ManualGroups = { categories: [], assignments: {}, categoryOrder: ['幽灵'] }
     expect(() => validateManualGroups(manual)).toThrow(/categoryOrder/)
   })
+
+  it('rejects parent entries that name unknown or non-group values', () => {
+    const unknownChild: ManualGroups = { categories: ['A'], assignments: {}, parents: { '幽灵': 'A' } }
+    expect(() => validateManualGroups(unknownChild)).toThrow(/unknown group/)
+    const unknownParent: ManualGroups = { categories: ['A'], assignments: {}, parents: { A: '幽灵' } }
+    expect(() => validateManualGroups(unknownParent)).toThrow(/not a group/)
+  })
+
+  it('rejects a parent cycle', () => {
+    const manual: ManualGroups = { categories: ['A', 'B'], assignments: {}, parents: { A: 'B', B: 'A' } }
+    expect(() => validateManualGroups(manual)).toThrow(/cycle/)
+  })
+
+  it('accepts a nested forest, including the built-in group as a parent', () => {
+    const manual: ManualGroups = {
+      categories: ['A', 'B', 'C'],
+      assignments: {},
+      parents: { B: 'A', C: DEFAULT_GROUP },
+    }
+    expect(() => validateManualGroups(manual)).not.toThrow()
+  })
 })
 
 describe('manual file round-trip', () => {
@@ -126,9 +154,10 @@ describe('manual file round-trip', () => {
     const path = join(dir, 'workspace-groups.manual.json')
     try {
       const overlay: ManualGroups = {
-        categories: ['临时'],
+        categories: ['临时', '子分组'],
         assignments: { 'ws-1': '临时', 'ws-2': null },
-        categoryOrder: ['临时'],
+        categoryOrder: ['临时', '子分组'],
+        parents: { '子分组': '临时' },
         mode: 'official',
       }
       await writeManualGroups(path, overlay)

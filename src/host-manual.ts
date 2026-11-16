@@ -89,6 +89,27 @@ export function parseManualGroups(raw: unknown): ManualGroups {
   if (source.categoryOrder !== undefined) {
     manual.categoryOrder = parseStringList(source.categoryOrder, 'categoryOrder')
   }
+  if (source.parents !== undefined) {
+    if (typeof source.parents !== 'object' || source.parents === null || Array.isArray(source.parents)) {
+      throw new Error('workspace-virtual-groups.manual.json: parents must be a mapping')
+    }
+    const parents: Record<string, string> = {}
+    for (const [child, parent] of Object.entries(source.parents)) {
+      if (typeof child !== 'string' || child.trim() === '') {
+        throw new Error('workspace-virtual-groups.manual.json: parent keys must be non-empty')
+      }
+      if (typeof parent !== 'string' || parent.trim() === '') {
+        throw new Error(`workspace-virtual-groups.manual.json: parent of "${child}" must be a group name`)
+      }
+      const childName = child.trim()
+      const parentName = parent.trim()
+      if (childName === DEFAULT_GROUP) {
+        throw new Error(`workspace-virtual-groups.manual.json: the built-in group "${childName}" cannot be nested`)
+      }
+      parents[childName] = parentName
+    }
+    manual.parents = parents
+  }
 
   return manual
 }
@@ -131,6 +152,28 @@ export function validateManualGroups(manual: ManualGroups): void {
   for (const key of manual.categoryOrder ?? []) {
     if (!groups.has(key)) {
       throw new Error(`workspace-virtual-groups.manual.json: categoryOrder references unknown group "${key}"`)
+    }
+  }
+  const parents = manual.parents ?? {}
+  for (const [child, parent] of Object.entries(parents)) {
+    if (!groups.has(child)) {
+      throw new Error(`workspace-virtual-groups.manual.json: parents reference unknown group "${child}"`)
+    }
+    if (parent !== DEFAULT_GROUP && !groups.has(parent)) {
+      throw new Error(`workspace-virtual-groups.manual.json: parent "${parent}" of "${child}" is not a group`)
+    }
+  }
+  // Nested groups form a forest; a cycle would make every walk over it
+  // non-terminating, and dropping it here keeps the browser half simple.
+  for (const child of Object.keys(parents)) {
+    const seen = new Set<string>([child])
+    let cursor = parents[child]
+    while (cursor !== undefined) {
+      if (seen.has(cursor)) {
+        throw new Error(`workspace-virtual-groups.manual.json: parents contain a cycle through "${child}"`)
+      }
+      seen.add(cursor)
+      cursor = parents[cursor]
     }
   }
 }

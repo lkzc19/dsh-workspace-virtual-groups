@@ -15,11 +15,15 @@
 import type { ManualGroups } from '../core/types.ts'
 import { DEFAULT_GROUP } from '../core/types.ts'
 import {
-  effectiveCategories,
-  moveAfter,
-  moveBefore,
+  applyGroupMove,
+  displayCategoryKeys,
+  groupParents,
+  isDescendant,
+  removeGroup,
   resolveCategory,
   takenCategoryNames,
+  walkRenderOrder,
+  type GroupDropMode,
 } from '../core/grouping.ts'
 import css from './styles.css?inline'
 
@@ -51,8 +55,6 @@ const OFFICIAL_GROUPING_LABELS = new Set<string>(
 )
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
-/** Indentation applied to project sections inside a virtual group (matches the official tree step). */
-const GROUP_INDENT = '20px'
 
 type NormalizedManual = Required<ManualGroups>
 
@@ -60,6 +62,7 @@ const EMPTY_MANUAL: NormalizedManual = {
   categories: [],
   assignments: {},
   categoryOrder: [],
+  parents: {},
   mode: 'virtual',
 }
 
@@ -75,10 +78,19 @@ function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
       category === null || !categorySet.has(category) ? null : category,
     ]),
   )
+  const parents = Object.fromEntries(
+    Object.entries(manual.parents ?? {})
+      .filter(([child, parent]) => child !== DEFAULT_GROUP
+        && parent !== DEFAULT_GROUP
+        && child !== parent
+        && categorySet.has(child)
+        && categorySet.has(parent)),
+  )
   return {
     categories,
     assignments,
     categoryOrder: (manual.categoryOrder ?? []).filter(key => categorySet.has(key)),
+    parents,
     mode: manual.mode === 'official' ? 'official' : 'virtual',
   }
 }
@@ -171,6 +183,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
   const collapsed = readCollapsed()
   /** Official `--dsh-workspace-indent` value before this layer touched a section. */
   const originalIndent = new WeakMap<HTMLElement, string>()
+  /** Indent value this layer last wrote into a section (one per nesting depth). */
+  const writtenIndent = new WeakMap<HTMLElement, string>()
   const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
   const headerActionsMeta = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
   const headerActionsTracked = new Set<HTMLElement>()
@@ -217,11 +231,14 @@ export function mountWorkspaceVirtualGroups(ctx: {
       // Only undo the indent when it is still the value this layer wrote. If
       // the official tree view changed it in the meantime, leave the official
       // value in place instead of restoring the pre-grouping one.
-      if (original !== undefined && section.style.getPropertyValue('--dsh-workspace-indent') === GROUP_INDENT) {
+      const written = writtenIndent.get(section)
+      if (original !== undefined && written !== undefined
+        && section.style.getPropertyValue('--dsh-workspace-indent') === written) {
         if (original === '') section.style.removeProperty('--dsh-workspace-indent')
         else section.style.setProperty('--dsh-workspace-indent', original)
       }
       originalIndent.delete(section)
+      writtenIndent.delete(section)
       delete section.dataset.wvgIndent
     }
   }
@@ -240,12 +257,24 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   /** Open the create-group dialog. Shared by the repurposed header button. */
-  function openCreateGroupDialog(): void {
-    openNameDialog('新建分组', '', '创建', async (name) => {
+  /**
+   * Create a group. Without a parent it lands at the top level; with one it
+   * becomes that group's child (the built-in group is the top level itself, so
+   * a "child" of it is just another top-level group).
+   */
+  function openCreateGroupDialog(parent: string | null = null): void {
+    const parentKey = parent
+    openNameDialog(parentKey === null ? '新建分组' : '新建子分组', '', '创建', async (name) => {
       const taken = takenCategoryNames(manual)
       if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
       if (taken.has(name)) return '已存在同名分组'
-      await persist({ ...manual, categories: [...manual.categories, name] })
+      if (parentKey !== null && collapsed.delete(parentKey)) writeCollapsed(collapsed)
+      await persist({
+        ...manual,
+        categories: [...manual.categories, name],
+        parents: parentKey === null ? manual.parents : { ...manual.parents, [name]: parentKey },
+        categoryOrder: [...displayCategoryKeys(manual).filter(key => key !== DEFAULT_GROUP), name],
+      })
       return null
     })
   }
@@ -591,8 +620,10 @@ export function mountWorkspaceVirtualGroups(ctx: {
       if (Number.parseFloat(original) > 0) return true
       // A reused node whose inline indent no longer matches ours was changed by
       // the official tree view between reconciles.
+      const written = writtenIndent.get(section)
       return section.dataset.wvgIndent === '1'
-        && section.style.getPropertyValue('--dsh-workspace-indent') !== GROUP_INDENT
+        && written !== undefined
+        && section.style.getPropertyValue('--dsh-workspace-indent') !== written
     })
     if (inOfficialTree) {
       cleanupList()
@@ -610,28 +641,45 @@ export function mountWorkspaceVirtualGroups(ctx: {
       else bucket.push(section)
     }
 
-    const groups = effectiveCategories(manual)
+    // Collapsed state is inherited: a collapsed ancestor hides the whole subtree.
+    const parentByKey = groupParents(manual)
+    const hiddenUnderCollapsed = (key: string): boolean => {
+      let cursor = parentByKey.get(key)
+      while (cursor !== undefined) {
+        if (collapsed.has(cursor)) return true
+        cursor = parentByKey.get(cursor)
+      }
+      return false
+    }
 
     const visible = new Set<string>()
-    groups.forEach((entry, groupIndex) => {
-      visible.add(entry.key)
-      let header = groupedHeaders.get(entry.key)
-      if (header === undefined || !header.isConnected) {
-        header = createGroupHeader(entry.key)
-        groupedHeaders.set(entry.key, header)
-        list!.append(header)
-      }
-      header.style.order = String(groupIndex * 100000 - 1000)
-      header.setAttribute('aria-expanded', collapsed.has(entry.key) ? 'false' : 'true')
-      const label = header.querySelector<HTMLElement>('.wvg-label')
-      if (label !== null) label.textContent = entry.key
-      const items = members.get(entry.key) ?? []
-      items.forEach((section, index) => {
-        section.style.order = String(groupIndex * 100000 + index)
-        section.style.display = collapsed.has(entry.key) ? 'none' : ''
-        section.style.setProperty('--dsh-workspace-indent', GROUP_INDENT)
+    let cursor = 0
+    walkRenderOrder<HTMLElement>(manual, key => members.get(key) ?? [], {
+      header: (key, depth) => {
+        visible.add(key)
+        let header = groupedHeaders.get(key)
+        if (header === undefined || !header.isConnected) {
+          header = createGroupHeader(key)
+          groupedHeaders.set(key, header)
+          list!.append(header)
+        }
+        const hidden = hiddenUnderCollapsed(key)
+        header.style.order = String(cursor++)
+        header.style.paddingLeft = `${12 + depth * 16}px`
+        header.style.display = hidden ? 'none' : ''
+        header.dataset.wvgDepth = String(depth)
+        header.setAttribute('aria-expanded', collapsed.has(key) ? 'false' : 'true')
+        const label = header.querySelector<HTMLElement>('.wvg-label')
+        if (label !== null) label.textContent = key
+      },
+      member: (section, groupKey, depth) => {
+        section.style.order = String(cursor++)
+        section.style.display = hiddenUnderCollapsed(groupKey) || collapsed.has(groupKey) ? 'none' : ''
+        const indent = `${20 + depth * 16}px`
+        section.style.setProperty('--dsh-workspace-indent', indent)
+        writtenIndent.set(section, indent)
         section.dataset.wvgIndent = '1'
-      })
+      },
     })
     for (const [key, header] of groupedHeaders) {
       if (visible.has(key)) continue
@@ -650,7 +698,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function onDragStart(event: DragEvent): void {
     const row = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-row-key^="workspace:"]')
-    if (row === null) return
+    if (row === null || row === undefined) return
     const key = row.getAttribute('data-row-key') ?? ''
     if (!key.startsWith('workspace:')) return
     dragId = key.slice('workspace:'.length)
@@ -667,18 +715,41 @@ export function mountWorkspaceVirtualGroups(ctx: {
       .forEach((header) => header.classList.remove('wvg-dragging', 'wvg-drop', 'wvg-insert-before', 'wvg-insert-after'))
   }
 
+  /**
+   * Drop zone inside a group header: the outer thirds insert as a sibling, the
+   * middle nests. Every drop on the built-in group means "move to the top
+   * level", because that group is the root and can never have siblings.
+   */
+  function dropMode(event: DragEvent, header: HTMLElement): GroupDropMode {
+    if ((header.dataset.wvgGroup ?? '') === DEFAULT_GROUP) return 'inside'
+    const rect = header.getBoundingClientRect()
+    const ratio = (event.clientY - rect.top) / rect.height
+    if (ratio < 0.3) return 'before'
+    if (ratio > 0.7) return 'after'
+    return 'inside'
+  }
+
+  /** A group cannot be dropped on itself or anywhere inside its own subtree. */
+  function canDropGroup(target: string): boolean {
+    const dragged = draggingGroup
+    if (dragged === null || target === dragged) return false
+    return !isDescendant(manual, target, dragged)
+  }
+
+  function clearDropMarks(): void {
+    document.querySelectorAll<HTMLElement>('.wvg-group.wvg-drop, .wvg-group.wvg-insert-before, .wvg-group.wvg-insert-after')
+      .forEach((node) => node.classList.remove('wvg-drop', 'wvg-insert-before', 'wvg-insert-after'))
+  }
+
   function onGroupDragOver(event: DragEvent, header: HTMLElement): void {
     if (draggingGroup !== null) {
-      const key = header.dataset.wvgGroup ?? ''
-      if (key === DEFAULT_GROUP || key === draggingGroup) return
+      if (!canDropGroup(header.dataset.wvgGroup ?? '')) return
       event.preventDefault()
       event.stopPropagation()
       if (event.dataTransfer !== null) event.dataTransfer.dropEffect = 'move'
-      const rect = header.getBoundingClientRect()
-      const before = event.clientY < rect.top + rect.height / 2
-      document.querySelectorAll<HTMLElement>('.wvg-group.wvg-insert-before, .wvg-group.wvg-insert-after')
-        .forEach((node) => node.classList.remove('wvg-insert-before', 'wvg-insert-after'))
-      header.classList.add(before ? 'wvg-insert-before' : 'wvg-insert-after')
+      const mode = dropMode(event, header)
+      clearDropMarks()
+      header.classList.add(mode === 'inside' ? 'wvg-drop' : mode === 'before' ? 'wvg-insert-before' : 'wvg-insert-after')
       return
     }
     if (dragId === null) return
@@ -695,14 +766,13 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function onGroupDrop(event: DragEvent, key: string, header: HTMLElement): void {
     if (draggingGroup !== null) {
-      if (key === DEFAULT_GROUP || key === draggingGroup) return
+      if (!canDropGroup(key)) return
       event.preventDefault()
       event.stopPropagation()
-      const rect = header.getBoundingClientRect()
-      const before = event.clientY < rect.top + rect.height / 2
+      const mode = dropMode(event, header)
       const dragged = draggingGroup
       clearDrag()
-      void reorderGroup(dragged, key, before)
+      void moveGroup(dragged, key, mode)
       return
     }
     if (dragId === null) return
@@ -742,16 +812,23 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
   }
 
-  async function reorderGroup(draggedKey: string, targetKey: string, before: boolean): Promise<void> {
-    if (draggedKey === targetKey || targetKey === DEFAULT_GROUP) return
-    const order = effectiveCategories(manual)
-      .map(entry => entry.key)
-      .filter(key => key !== DEFAULT_GROUP)
-    const categoryOrder = before
-      ? moveBefore(order, draggedKey, targetKey)
-      : moveAfter(order, draggedKey, targetKey)
+  /** Apply a group drag: nest under the target, or sit beside it. */
+  async function moveGroup(draggedKey: string, targetKey: string, mode: GroupDropMode): Promise<void> {
+    const next = applyGroupMove(manual, draggedKey, targetKey, mode)
+    const parentsOf = (record: Record<string, string>): string => Object.entries(record)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([child, parent]) => `${child}\u0000${parent}`)
+      .join('\u0001')
+    if (parentsOf(next.parents) === parentsOf(manual.parents)
+      && next.categoryOrder.join('\u0000') === manual.categoryOrder.join('\u0000')) {
+      return
+    }
+    // Reveal the destination so the dragged group does not vanish into a
+    // collapsed parent.
+    const destination = next.parents[draggedKey]
+    if (destination !== undefined && collapsed.delete(destination)) writeCollapsed(collapsed)
     try {
-      await persist({ ...manual, categoryOrder })
+      await persist({ ...manual, parents: next.parents, categoryOrder: next.categoryOrder })
     } catch (reason) {
       showToast(reason instanceof Error ? reason.message : String(reason))
     }
@@ -785,59 +862,48 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   function requestDeleteGroup(key: string): void {
-    openConfirmDialog('删除分组', `删除后，该分组内的项目会移到「${DEFAULT_GROUP}」。`, async () => {
+    const destination = groupParents(manual).get(key) ?? DEFAULT_GROUP
+    openConfirmDialog('删除分组', `删除后，该分组内的项目和子分组会移到「${destination}」。`, async () => {
       await deleteGroup(key)
     })
   }
 
   /** Menu row matching DSH's context-menu item (16px icon + 13px label). */
-  function menuItem(label: string, icon: string, danger = false): HTMLButtonElement {
+  function menuItemSvg(label: string, svg: string, danger = false): HTMLButtonElement {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = danger ? 'wvg-menu-item wvg-danger' : 'wvg-menu-item'
     button.setAttribute('role', 'menuitem')
-    button.innerHTML = `<span class="wvg-menu-icon">${svgIcon(icon, 16)}</span><span class="wvg-menu-label"></span>`
+    button.innerHTML = `<span class="wvg-menu-icon">${svg}</span><span class="wvg-menu-label"></span>`
     const text = button.querySelector<HTMLElement>('.wvg-menu-label')
     if (text !== null) text.textContent = label
     return button
   }
 
-  function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
-    closeMenu()
-    menuAnchor = anchor
-    anchor.closest<HTMLElement>('.wvg-group')?.classList.add('wvg-menu-open')
+  function menuItem(label: string, icon: string, danger = false): HTMLButtonElement {
+    return menuItemSvg(label, svgIcon(icon, 16), danger)
+  }
+
+  function createMenuPanel(label: string): HTMLElement {
     const panel = document.createElement('div')
     panel.className = 'wvg-menu'
     panel.setAttribute('role', 'menu')
-    panel.setAttribute('aria-label', `分组“${key}”的操作`)
-    const addWorkspace = menuItem('添加工作区', 'dsw-icon-project-add-outline-regular')
-    addWorkspace.addEventListener('click', () => {
-      closeMenu()
-      void addWorkspaceToGroup(key)
-    })
-    panel.append(addWorkspace)
-    if (key !== DEFAULT_GROUP) {
-      const rename = menuItem('重命名分组', 'dsw-icon-edit-outline-regular')
-      rename.addEventListener('click', () => {
-        closeMenu()
-        openNameDialog('重命名分组', key, '重命名', async (name) => {
-          if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
-          if (name === key) return null
-          if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
-          await renameGroup(key, name)
-          return null
-        })
-      })
-      const separator = document.createElement('div')
-      separator.className = 'wvg-menu-separator'
-      separator.setAttribute('role', 'separator')
-      const remove = menuItem('删除分组', 'dsw-icon-trash-outline-regular', true)
-      remove.addEventListener('click', () => {
-        closeMenu()
-        requestDeleteGroup(key)
-      })
-      panel.append(rename, separator, remove)
-    }
+    panel.setAttribute('aria-label', label)
+    return panel
+  }
+
+  function menuSeparator(): HTMLElement {
+    const separator = document.createElement('div')
+    separator.className = 'wvg-menu-separator'
+    separator.setAttribute('role', 'separator')
+    return separator
+  }
+
+  /** Show a menu panel at (x, y); outside clicks and Escape close it. */
+  function showMenu(panel: HTMLElement, anchor: HTMLElement, x: number, y: number): void {
+    closeMenu()
+    menuAnchor = anchor
+    anchor.closest<HTMLElement>('.wvg-group')?.classList.add('wvg-menu-open')
     document.body.append(panel)
     const rect = panel.getBoundingClientRect()
     panel.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`
@@ -856,6 +922,45 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
     document.addEventListener('keydown', menuKeyClose, true)
     panel.querySelector<HTMLButtonElement>('.wvg-menu-item')?.focus()
+  }
+
+  function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
+    const panel = createMenuPanel(`分组“${key}”的操作`)
+    const addWorkspace = menuItem('添加工作区', 'dsw-icon-project-add-outline-regular')
+    addWorkspace.addEventListener('click', () => {
+      closeMenu()
+      void addWorkspaceToGroup(key)
+    })
+    const addGroup = menuItemSvg('添加分组', LAYER_ICON)
+    addGroup.addEventListener('click', () => {
+      closeMenu()
+      openCreateGroupDialog(key)
+    })
+    panel.append(addWorkspace, addGroup)
+    // The built-in group may hold workspaces and nested groups, but it can never
+    // be renamed, deleted or dragged: its menu stops after the two add actions.
+    if (key === DEFAULT_GROUP) {
+      showMenu(panel, anchor, x, y)
+      return
+    }
+    const rename = menuItem('重命名分组', 'dsw-icon-edit-outline-regular')
+    rename.addEventListener('click', () => {
+      closeMenu()
+      openNameDialog('重命名分组', key, '重命名', async (name) => {
+        if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
+        if (name === key) return null
+        if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
+        await renameGroup(key, name)
+        return null
+      })
+    })
+    const remove = menuItem('删除分组', 'dsw-icon-trash-outline-regular', true)
+    remove.addEventListener('click', () => {
+      closeMenu()
+      requestDeleteGroup(key)
+    })
+    panel.append(rename, menuSeparator(), remove)
+    showMenu(panel, anchor, x, y)
   }
 
   function closeMenu(): void {
@@ -881,27 +986,26 @@ export function mountWorkspaceVirtualGroups(ctx: {
         category === from ? name : category,
       ]),
     )
+    // The renamed group can be a parent as well as a child.
+    const parents = Object.fromEntries(
+      Object.entries(manual.parents).map(([child, parent]) => [
+        child === from ? name : child,
+        parent === from ? name : parent,
+      ]),
+    )
     const categoryOrder = manual.categoryOrder.map(key => key === from ? name : key)
     await persist({
       ...manual,
       categories: manual.categories.map(key => key === from ? name : key),
       assignments,
+      parents,
       categoryOrder,
     })
   }
 
   async function deleteGroup(key: string): Promise<void> {
     if (key === DEFAULT_GROUP) return
-    const assignments = { ...manual.assignments }
-    for (const [workspaceId, category] of Object.entries(assignments)) {
-      if (category === key) assignments[workspaceId] = null
-    }
-    await persist({
-      ...manual,
-      categories: manual.categories.filter(entry => entry !== key),
-      assignments,
-      categoryOrder: manual.categoryOrder.filter(entry => entry !== key),
-    })
+    await persist({ ...manual, ...removeGroup(manual, key) })
   }
 
   function openNameDialog(title: string, initial: string, confirmLabel: string, submit: (name: string) => Promise<string | null>): void {
