@@ -19,81 +19,40 @@ import {
   displayCategoryKeys,
   groupParents,
   isDescendant,
+  normalizeManual,
   removeGroup,
   resolveCategory,
   takenCategoryNames,
   walkRenderOrder,
   type GroupDropMode,
+  type NormalizedManual,
 } from '../core/grouping.ts'
+import { closeModal, openConfirmDialog, openNameDialog } from './dialogs.ts'
+import {
+  ensureNewGroupButton,
+  officialAddButton,
+  removeNewGroupButtons,
+} from './new-group-button.ts'
+import { closeMenu, openMenu, type MenuEntry } from './menu.ts'
+import { disposeToast, showToast } from './toast.ts'
+import { LAYER_ICON, svgIcon } from './ui.ts'
+import { closeViewOptions, ensureViewOptions } from './view-options.ts'
 import css from './styles.css?inline'
 
-const MIME = 'application/x-dsh-workspace-virtual-groups'
-const GROUP_MIME = 'application/x-dsh-workspace-virtual-group'
+/**
+ * Drag payload MIME. Firefox only starts a drag when `dataTransfer` carries
+ * data; nothing reads the value back — the dragged item is tracked in
+ * `dragId` / `draggingGroup`.
+ */
+const DRAG_MIME = 'application/x-dsh-workspace-virtual-groups'
 
-/** Layer glyph used by the new-group button and the view-options item. */
-const LAYER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" data-wvg-layer="1" aria-hidden="true"><path d="M8 1.8 14 5 8 8.2 2 5 8 1.8Z"></path><path d="M2 8 8 11.2 14 8"></path><path d="M2 11 8 14.2 14 11"></path></svg>'
-/** Official grouping-mode icons; stable across UI locales. */
-const GROUPING = {
-  workspace: {
-    icon: 'dsw-icon-folder-close-regular',
-    labels: ['按工作区', 'By workspace'],
-  },
-  tree: {
-    icon: 'dsw-icon-workspace-tree-outline-regular',
-    labels: ['按工作区树', 'By workspace tree'],
-  },
-  flatList: {
-    icon: 'dsw-icon-flat-list-outline-regular',
-    labels: ['单列表', 'Flat list'],
-  },
-} as const
-const OFFICIAL_GROUPING_ICONS = new Set<string>(
-  Object.values(GROUPING).map((entry) => entry.icon),
-)
-const OFFICIAL_GROUPING_LABELS = new Set<string>(
-  Object.values(GROUPING).flatMap((entry) => entry.labels),
-)
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
-
-type NormalizedManual = Required<ManualGroups>
-
-const EMPTY_MANUAL: NormalizedManual = {
-  categories: [],
-  assignments: {},
-  categoryOrder: [],
-  parents: {},
-  mode: 'virtual',
-}
-
-/** Materialize optional overlay fields into the fully-populated client shape. */
-function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
-  if (manual === undefined) return EMPTY_MANUAL
-  const categories = [...new Set(manual.categories)]
-    .filter(name => name !== DEFAULT_GROUP)
-  const categorySet = new Set(categories)
-  const assignments = Object.fromEntries(
-    Object.entries(manual.assignments).map(([id, category]): [string, string | null] => [
-      id,
-      category === null || !categorySet.has(category) ? null : category,
-    ]),
-  )
-  const parents = Object.fromEntries(
-    Object.entries(manual.parents ?? {})
-      .filter(([child, parent]) => child !== DEFAULT_GROUP
-        && parent !== DEFAULT_GROUP
-        && child !== parent
-        && categorySet.has(child)
-        && categorySet.has(parent)),
-  )
-  return {
-    categories,
-    assignments,
-    categoryOrder: (manual.categoryOrder ?? []).filter(key => categorySet.has(key)),
-    parents,
-    mode: manual.mode === 'official' ? 'official' : 'virtual',
-  }
-}
+/** Header padding at depth 0, and the extra step per nesting level. */
+const HEADER_INDENT_START = 12
+const INDENT_STEP = 16
+/** Project rows sit one step further in than the header of their group. */
+const PROJECT_INDENT_START = 20
 
 /** Fetch the runtime overlay. */
 async function loadState(): Promise<NormalizedManual> {
@@ -135,10 +94,6 @@ function writeCollapsed(collapsed: ReadonlySet<string>): void {
   } catch { /* private mode / quota: expansion is only a view preference */ }
 }
 
-function svgIcon(id: string, size: number): string {
-  return `<svg width="${size}" height="${size}" aria-hidden="true"><use href="#${id}"></use></svg>`
-}
-
 /**
  * Mount the grouping layer over the official Workspace browser.
  *
@@ -160,22 +115,12 @@ export function mountWorkspaceVirtualGroups(ctx: {
   document.head.append(style)
 
   let disposed = false
-  let manual: NormalizedManual = EMPTY_MANUAL
+  let manual: NormalizedManual = normalizeManual(undefined)
   let loaded = false
   let list: HTMLElement | null = null
   let viewMode: 'virtual' | 'official' = 'virtual'
-  let suppressViewModeClick = false
-  let lastSelectedExtra: string[] = []
-  let lastCheckHTML: string | null = null
   let addingWorkspace = false
   let frame = 0
-  let menu: HTMLElement | null = null
-  let menuAnchor: HTMLElement | null = null
-  let menuPointerClose: ((event: PointerEvent) => void) | null = null
-  let menuKeyClose: ((event: KeyboardEvent) => void) | null = null
-  let modal: HTMLElement | null = null
-  let modalKeyHandler: ((event: KeyboardEvent) => void) | null = null
-  let toastTimer = 0
   let dragId: string | null = null
   let draggingGroup: string | null = null
   let saveQueue: Promise<void> = Promise.resolve()
@@ -185,9 +130,31 @@ export function mountWorkspaceVirtualGroups(ctx: {
   const originalIndent = new WeakMap<HTMLElement, string>()
   /** Indent value this layer last wrote into a section (one per nesting depth). */
   const writtenIndent = new WeakMap<HTMLElement, string>()
-  const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
-  const headerActionsMeta = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
-  const headerActionsTracked = new Set<HTMLElement>()
+
+  const viewOptionsHost = {
+    mode: (): 'virtual' | 'official' => viewMode,
+    select: (mode: 'virtual' | 'official'): void => setViewMode(mode),
+  }
+
+  const newGroupButtonHost = {
+    isVirtual: (): boolean => viewMode === 'virtual',
+    onCreate: (): void => openCreateGroupDialog(),
+  }
+
+  /** Switch between virtual grouping and the official grouping modes. */
+  function setViewMode(mode: 'virtual' | 'official'): void {
+    if (!loaded) return
+    if (viewMode === mode) {
+      schedule()
+      return
+    }
+    viewMode = mode
+    manual = { ...manual, mode }
+    schedule()
+    void persist(manual).catch((reason) => {
+      showToast(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
 
   /** Coalesce DOM/state notifications into one animation frame. */
   function schedule(): void {
@@ -220,7 +187,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
   /** The official list is a block container; a flex column lets `order` work. */
   function markList(target: HTMLElement): void {
     target.classList.add('wvg-list')
-    target.dataset.wvgList = '1'
   }
 
   function clearSections(target: HTMLElement): void {
@@ -251,7 +217,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function cleanupList(): void {
     if (list === null) return
     list.classList.remove('wvg-list')
-    delete list.dataset.wvgList
     clearSections(list)
     clearHeaders()
   }
@@ -279,245 +244,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  function officialAddButton(): HTMLButtonElement | null {
-    const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-project-add-outline-regular"]')
-    const button = use?.closest('button')
-    return button instanceof HTMLButtonElement ? button : null
-  }
-
-  /** Restore the official header-actions width after the extra button goes away. */
-  function restoreHeaderActions(actions: HTMLElement | null): void {
-    if (actions === null) return
-    const original = headerActionsMeta.get(actions)
-    if (original === undefined) return
-    actions.style.width = original.width
-    actions.style.minWidth = original.minWidth
-    actions.style.overflow = original.overflow
-    headerActionsMeta.delete(actions)
-    headerActionsTracked.delete(actions)
-  }
-
-  function removeNewGroupButtons(): void {
-    document.querySelectorAll<HTMLElement>('[data-wvg-new-group]').forEach((node) => {
-      const actions = node.parentElement
-      node.remove()
-      restoreHeaderActions(actions)
-    })
-    for (const actions of [...headerActionsTracked]) restoreHeaderActions(actions)
-  }
-
-  /** The layer-icon button next to the official add-workspace button. */
-  function ensureNewGroupButton(): void {
-    if (viewMode !== 'virtual') {
-      removeNewGroupButtons()
-      return
-    }
-    const add = officialAddButton()
-    if (add === null) {
-      removeNewGroupButtons()
-      return
-    }
-    let button = document.querySelector<HTMLButtonElement>('button[data-wvg-new-group]')
-    if (button === null || !button.isConnected) {
-      button = add.cloneNode(true) as HTMLButtonElement
-      button.dataset.wvgNewGroup = '1'
-      add.after(button)
-    }
-    if (button.previousElementSibling !== add) add.after(button)
-    button.setAttribute('aria-label', '新建分组')
-    button.removeAttribute('aria-keyshortcuts')
-    button.removeAttribute('aria-expanded')
-    if (button.querySelector('svg[data-wvg-layer="1"]') === null) button.innerHTML = LAYER_ICON
-    button.onclick = (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      openCreateGroupDialog()
-    }
-    // The official actions container is sized for two 28px buttons and clips
-    // overflow. Widen it to fit the layer button; restore it when the button is
-    // removed or the plugin unmounts.
-    const actions = button.parentElement
-    if (actions !== null) {
-      if (!headerActionsMeta.has(actions)) {
-        headerActionsMeta.set(actions, {
-          width: actions.style.width,
-          minWidth: actions.style.minWidth,
-          overflow: actions.style.overflow,
-        })
-        headerActionsTracked.add(actions)
-      }
-      actions.style.width = 'max-content'
-      actions.style.minWidth = 'max-content'
-      actions.style.overflow = 'visible'
-    }
-  }
-
-  function groupingIcon(button: HTMLButtonElement): string | null {
-    const svg = button.querySelector<SVGElement>(':scope > span svg[data-icon]')
-    return svg?.getAttribute('data-icon') ?? null
-  }
-
-  function groupingLabel(button: HTMLButtonElement): string {
-    return (button.textContent ?? '').trim()
-  }
-
-  function isOfficialGroupingButton(button: HTMLButtonElement): boolean {
-    const icon = groupingIcon(button)
-    if (icon !== null && OFFICIAL_GROUPING_ICONS.has(icon)) return true
-    // Fallback for a DSH build that changes the icon names.
-    return OFFICIAL_GROUPING_LABELS.has(groupingLabel(button))
-  }
-
-  function findGroupingButton(
-    menu: HTMLElement,
-    group: (typeof GROUPING)[keyof typeof GROUPING],
-  ): HTMLButtonElement | null {
-    const buttons = [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')]
-    const labels: readonly string[] = group.labels
-    return buttons.find((button) => groupingIcon(button) === group.icon)
-      ?? buttons.find((button) => labels.includes(groupingLabel(button)))
-      ?? null
-  }
-
-  function virtualGroupingLabel(menu: HTMLElement): string {
-    const workspace = findGroupingButton(menu, GROUPING.workspace)
-    const label = workspace === null ? '' : groupingLabel(workspace)
-    return label.includes('按') || label.includes('工作区') ? '按虚拟分组' : 'Virtual groups'
-  }
-
-  function findViewOptionsMenu(): HTMLElement | null {
-    for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
-      // The CSS-module local name survives hashing and is language-independent.
-      if (menu.className.includes('viewOptionsMenu')) return menu
-      // Fallback: a menu that contains an official grouping mode.
-      if ([...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].some(isOfficialGroupingButton)) {
-        return menu
-      }
-    }
-    return null
-  }
-
-  function closeViewOptions(): void {
-    if (findViewOptionsMenu() === null) return
-    const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-sliders-two-outline-regular"]')
-    const trigger = use?.closest('button')
-    if (trigger instanceof HTMLButtonElement) trigger.click()
-    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  }
-
-  /** Add/refresh the "按虚拟分组" item inside the official view-options menu. */
-  function ensureViewOptions(): void {
-    const menu = findViewOptionsMenu()
-    if (menu === null) return
-    const isOfficial = isOfficialGroupingButton
-    let ours = menu.querySelector<HTMLButtonElement>('button[data-wvg-view-virtual]')
-    if (ours === null) {
-      const tree = findGroupingButton(menu, GROUPING.tree)
-      const wrap = tree?.parentElement
-      if (tree === null || wrap === undefined || wrap === null) return
-      const official = [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].filter(isOfficial)
-      const unselected = official.find((button) => button.querySelector(':scope > svg') === null) ?? tree
-      const selected = official.find((button) => button.querySelector(':scope > svg') !== null)
-      const baseClass = unselected.className
-      const selectedExtra = selected === undefined
-        ? []
-        : [...selected.classList].filter((name) => !unselected.classList.contains(name))
-      const checkHTML = selected?.querySelector(':scope > svg')?.outerHTML ?? null
-      if (selectedExtra.length > 0) lastSelectedExtra = selectedExtra
-      if (checkHTML !== null) lastCheckHTML = checkHTML
-      const clone = wrap.cloneNode(true) as HTMLElement
-      clone.dataset.wvgViewWrap = '1'
-      const button = clone.querySelector<HTMLButtonElement>('button[role="menuitem"]')
-      if (button === null) return
-      button.dataset.wvgViewVirtual = '1'
-      button.className = baseClass
-      const label = [...button.querySelectorAll(':scope > span')]
-        .find((span) => span.querySelector('svg') === null && (span.textContent ?? '').trim() !== '')
-      if (label !== undefined) label.textContent = virtualGroupingLabel(menu)
-      const icon = button.querySelector<HTMLElement>('[class*="itemIcon"]')
-        ?? [...button.querySelectorAll('span')].find((span) => span.querySelector('svg') !== null)
-      if (icon !== undefined) icon.innerHTML = LAYER_ICON
-      button.querySelector(':scope > svg')?.remove()
-      wrap.after(clone)
-      viewMenuMeta.set(button, {
-        baseClass,
-        selectedExtra: selectedExtra.length > 0 ? selectedExtra : lastSelectedExtra,
-        check: checkHTML ?? lastCheckHTML,
-      })
-      button.addEventListener('click', (event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        activateVirtualMode(menu)
-      })
-      ours = button
-    }
-
-    if (menu.dataset.wvgModeListener !== '1') {
-      menu.dataset.wvgModeListener = '1'
-      menu.addEventListener('click', (event) => {
-        if (suppressViewModeClick) return
-        const button = (event.target as Element | null)?.closest<HTMLButtonElement>('button[role="menuitem"]')
-        if (button === null || button === undefined) return
-        if (!isOfficial(button)) return
-        setViewMode('official')
-      }, true)
-    }
-
-    const meta = viewMenuMeta.get(ours)
-      ?? { baseClass: ours.className, selectedExtra: lastSelectedExtra, check: lastCheckHTML }
-    if (viewMode === 'virtual') {
-      for (const button of menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')) {
-        if (button === ours || !isOfficial(button)) continue
-        if (meta.selectedExtra.length > 0) button.classList.remove(...meta.selectedExtra)
-        button.querySelector(':scope > svg')?.remove()
-      }
-      ours.className = meta.selectedExtra.length > 0
-        ? `${meta.baseClass} ${meta.selectedExtra.join(' ')}`
-        : meta.baseClass
-      if (meta.check !== null && ours.querySelector(':scope > svg') === null) {
-        const holder = document.createElement('template')
-        holder.innerHTML = meta.check
-        const check = holder.content.firstElementChild
-        if (check !== null) ours.append(check)
-      }
-    } else {
-      ours.className = meta.baseClass
-      ours.querySelector(':scope > svg')?.remove()
-    }
-  }
-
-  function setViewMode(mode: 'virtual' | 'official'): void {
-    if (!loaded) return
-    if (viewMode === mode) {
-      schedule()
-      return
-    }
-    viewMode = mode
-    manual = { ...manual, mode }
-    schedule()
-    void persist(manual).catch((reason) => {
-      showToast(reason instanceof Error ? reason.message : String(reason))
-    })
-  }
-
-  function activateVirtualMode(menu: HTMLElement): void {
-    setViewMode('virtual')
-    const byWorkspace = findGroupingButton(menu, GROUPING.workspace)
-    if (byWorkspace === null) {
-      closeViewOptions()
-      return
-    }
-    // Selecting virtual grouping also normalizes the official mode to the flat
-    // "按工作区" list, otherwise the official tree nesting would fight the
-    // virtual sections. Suppress our own official-item listener for this click.
-    suppressViewModeClick = true
-    byWorkspace.click()
-    window.setTimeout(() => {
-      suppressViewModeClick = false
-      if (menu.isConnected) closeViewOptions()
-    }, 0)
-  }
-
   function createGroupHeader(key: string): HTMLElement {
     const header = document.createElement('div')
     header.className = 'wvg-group'
@@ -541,7 +267,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       }
       draggingGroup = key
       try {
-        event.dataTransfer?.setData(GROUP_MIME, key)
+        event.dataTransfer?.setData(DRAG_MIME, key)
         if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = 'move'
       } catch { /* synthetic drag */ }
       header.classList.add('wvg-dragging')
@@ -591,8 +317,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
       removeNewGroupButtons()
       return
     }
-    ensureViewOptions()
-    ensureNewGroupButton()
+    ensureViewOptions(viewOptionsHost)
+    ensureNewGroupButton(newGroupButtonHost)
     if (viewMode !== 'virtual') {
       cleanupList()
       return
@@ -665,17 +391,16 @@ export function mountWorkspaceVirtualGroups(ctx: {
         }
         const hidden = hiddenUnderCollapsed(key)
         header.style.order = String(cursor++)
-        header.style.paddingLeft = `${12 + depth * 16}px`
+        header.style.paddingLeft = `${HEADER_INDENT_START + depth * INDENT_STEP}px`
         header.style.display = hidden ? 'none' : ''
-        header.dataset.wvgDepth = String(depth)
-        header.setAttribute('aria-expanded', collapsed.has(key) ? 'false' : 'true')
+          header.setAttribute('aria-expanded', collapsed.has(key) ? 'false' : 'true')
         const label = header.querySelector<HTMLElement>('.wvg-label')
         if (label !== null) label.textContent = key
       },
       member: (section, groupKey, depth) => {
         section.style.order = String(cursor++)
         section.style.display = hiddenUnderCollapsed(groupKey) || collapsed.has(groupKey) ? 'none' : ''
-        const indent = `${20 + depth * 16}px`
+        const indent = `${PROJECT_INDENT_START + depth * INDENT_STEP}px`
         section.style.setProperty('--dsh-workspace-indent', indent)
         writtenIndent.set(section, indent)
         section.dataset.wvgIndent = '1'
@@ -703,7 +428,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     if (!key.startsWith('workspace:')) return
     dragId = key.slice('workspace:'.length)
     try {
-      event.dataTransfer?.setData(MIME, dragId)
+      event.dataTransfer?.setData(DRAG_MIME, dragId)
       if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = 'move'
     } catch { /* some synthetic drags have no writable dataTransfer */ }
   }
@@ -868,115 +593,35 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Menu row matching DSH's context-menu item (16px icon + 13px label). */
-  function menuItemSvg(label: string, svg: string, danger = false): HTMLButtonElement {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = danger ? 'wvg-menu-item wvg-danger' : 'wvg-menu-item'
-    button.setAttribute('role', 'menuitem')
-    button.innerHTML = `<span class="wvg-menu-icon">${svg}</span><span class="wvg-menu-label"></span>`
-    const text = button.querySelector<HTMLElement>('.wvg-menu-label')
-    if (text !== null) text.textContent = label
-    return button
-  }
-
-  function menuItem(label: string, icon: string, danger = false): HTMLButtonElement {
-    return menuItemSvg(label, svgIcon(icon, 16), danger)
-  }
-
-  function createMenuPanel(label: string): HTMLElement {
-    const panel = document.createElement('div')
-    panel.className = 'wvg-menu'
-    panel.setAttribute('role', 'menu')
-    panel.setAttribute('aria-label', label)
-    return panel
-  }
-
-  function menuSeparator(): HTMLElement {
-    const separator = document.createElement('div')
-    separator.className = 'wvg-menu-separator'
-    separator.setAttribute('role', 'separator')
-    return separator
-  }
-
-  /** Show a menu panel at (x, y); outside clicks and Escape close it. */
-  function showMenu(panel: HTMLElement, anchor: HTMLElement, x: number, y: number): void {
-    closeMenu()
-    menuAnchor = anchor
-    anchor.closest<HTMLElement>('.wvg-group')?.classList.add('wvg-menu-open')
-    document.body.append(panel)
-    const rect = panel.getBoundingClientRect()
-    panel.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`
-    panel.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`
-    menu = panel
-    const close = (event: PointerEvent): void => {
-      if (panel.contains(event.target as Node)) return
-      closeMenu()
-    }
-    menuPointerClose = close
-    window.setTimeout(() => {
-      if (menuPointerClose === close) document.addEventListener('pointerdown', close, true)
-    }, 0)
-    menuKeyClose = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeMenu()
-    }
-    document.addEventListener('keydown', menuKeyClose, true)
-    panel.querySelector<HTMLButtonElement>('.wvg-menu-item')?.focus()
-  }
-
   function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
-    const panel = createMenuPanel(`分组“${key}”的操作`)
-    const addWorkspace = menuItem('添加工作区', 'dsw-icon-project-add-outline-regular')
-    addWorkspace.addEventListener('click', () => {
-      closeMenu()
-      void addWorkspaceToGroup(key)
-    })
-    const addGroup = menuItemSvg('添加分组', LAYER_ICON)
-    addGroup.addEventListener('click', () => {
-      closeMenu()
-      openCreateGroupDialog(key)
-    })
-    panel.append(addWorkspace, addGroup)
+    const entries: MenuEntry[] = [
+      {
+        label: '添加工作区',
+        icon: 'dsw-icon-project-add-outline-regular',
+        onSelect: () => { void addWorkspaceToGroup(key) },
+      },
+      { label: '添加分组', svg: LAYER_ICON, onSelect: () => { openCreateGroupDialog(key) } },
+    ]
     // The built-in group may hold workspaces and nested groups, but it can never
     // be renamed, deleted or dragged: its menu stops after the two add actions.
-    if (key === DEFAULT_GROUP) {
-      showMenu(panel, anchor, x, y)
-      return
+    if (key !== DEFAULT_GROUP) {
+      entries.push(
+        { separator: true },
+        { label: '重命名分组', icon: 'dsw-icon-edit-outline-regular', onSelect: () => { openRenameDialog(key) } },
+        { label: '删除分组', icon: 'dsw-icon-trash-outline-regular', danger: true, onSelect: () => { requestDeleteGroup(key) } },
+      )
     }
-    const rename = menuItem('重命名分组', 'dsw-icon-edit-outline-regular')
-    rename.addEventListener('click', () => {
-      closeMenu()
-      openNameDialog('重命名分组', key, '重命名', async (name) => {
-        if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
-        if (name === key) return null
-        if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
-        await renameGroup(key, name)
-        return null
-      })
-    })
-    const remove = menuItem('删除分组', 'dsw-icon-trash-outline-regular', true)
-    remove.addEventListener('click', () => {
-      closeMenu()
-      requestDeleteGroup(key)
-    })
-    panel.append(rename, menuSeparator(), remove)
-    showMenu(panel, anchor, x, y)
+    openMenu(anchor, `分组“${key}”的操作`, entries, x, y)
   }
 
-  function closeMenu(): void {
-    const openHeaders = [...document.querySelectorAll<HTMLElement>('.wvg-group.wvg-menu-open')]
-    if (menuPointerClose !== null) document.removeEventListener('pointerdown', menuPointerClose, true)
-    if (menuKeyClose !== null) document.removeEventListener('keydown', menuKeyClose, true)
-    menuPointerClose = null
-    menuKeyClose = null
-    const anchor = menuAnchor
-    menuAnchor = null
-    menu?.remove()
-    menu = null
-    // Keep the hover-only trigger visible while returning focus to it; once
-    // focus lands, :focus-within keeps it visible after the class is removed.
-    if (anchor?.isConnected) anchor.focus()
-    openHeaders.forEach((header) => header.classList.remove('wvg-menu-open'))
+  function openRenameDialog(key: string): void {
+    openNameDialog('重命名分组', key, '重命名', async (name) => {
+      if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
+      if (name === key) return null
+      if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
+      await renameGroup(key, name)
+      return null
+    })
   }
 
   async function renameGroup(from: string, name: string): Promise<void> {
@@ -1006,134 +651,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
   async function deleteGroup(key: string): Promise<void> {
     if (key === DEFAULT_GROUP) return
     await persist({ ...manual, ...removeGroup(manual, key) })
-  }
-
-  function openNameDialog(title: string, initial: string, confirmLabel: string, submit: (name: string) => Promise<string | null>): void {
-    closeModal()
-    const overlay = document.createElement('div')
-    overlay.className = 'wvg-overlay'
-    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body"><input class="wvg-input" type="text" maxlength="80" aria-label="分组名称" /><div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-primary" data-wvg-ok></button></div></div>`
-    const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
-    dialog.setAttribute('aria-label', title)
-    dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
-    const input = dialog.querySelector<HTMLInputElement>('.wvg-input')!
-    input.value = initial
-    const error = dialog.querySelector<HTMLElement>('.wvg-error')!
-    const ok = dialog.querySelector<HTMLButtonElement>('[data-wvg-ok]')!
-    ok.textContent = confirmLabel
-    let busy = false
-    const initialTrimmed = initial.trim()
-    const syncOk = (): void => {
-      if (busy) return
-      const value = input.value.trim()
-      ok.disabled = value === '' || (initialTrimmed !== '' && value === initialTrimmed)
-    }
-    syncOk()
-    const close = (): void => closeModal()
-    const confirm = async (): Promise<void> => {
-      if (busy || ok.disabled) return
-      busy = true
-      ok.disabled = true
-      error.textContent = ''
-      try {
-        const message = await submit(input.value.trim())
-        if (message !== null) {
-          error.textContent = message
-          return
-        }
-        close()
-      } catch (reason) {
-        error.textContent = reason instanceof Error ? reason.message : String(reason)
-      } finally {
-        busy = false
-        syncOk()
-      }
-    }
-    dialog.querySelector<HTMLElement>('[data-wvg-cancel]')!.addEventListener('click', close)
-    dialog.querySelector<HTMLElement>('.wvg-dialog-close')!.addEventListener('click', close)
-    input.addEventListener('input', syncOk)
-    ok.addEventListener('click', () => { void confirm() })
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.isComposing) {
-        event.preventDefault()
-        void confirm()
-      }
-    })
-    overlay.addEventListener('pointerdown', (event) => {
-      if (event.target === overlay) close()
-    })
-    document.body.append(overlay)
-    modal = overlay
-    modalKeyHandler = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('keydown', modalKeyHandler)
-    window.requestAnimationFrame(() => {
-      input.focus()
-      input.select()
-    })
-  }
-
-  function openConfirmDialog(title: string, message: string, confirm: () => Promise<void>): void {
-    closeModal()
-    const overlay = document.createElement('div')
-    overlay.className = 'wvg-overlay'
-    overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body"><div class="wvg-dialog-message"></div><div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button wvg-danger" data-wvg-ok>删除</button></div></div>`
-    const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
-    dialog.setAttribute('aria-label', title)
-    dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
-    dialog.querySelector<HTMLElement>('.wvg-dialog-message')!.textContent = message
-    const error = dialog.querySelector<HTMLElement>('.wvg-error')!
-    const ok = dialog.querySelector<HTMLButtonElement>('[data-wvg-ok]')!
-    let busy = false
-    const close = (): void => closeModal()
-    const run = async (): Promise<void> => {
-      if (busy) return
-      busy = true
-      ok.disabled = true
-      error.textContent = ''
-      try {
-        await confirm()
-        close()
-      } catch (reason) {
-        error.textContent = reason instanceof Error ? reason.message : String(reason)
-      } finally {
-        busy = false
-        ok.disabled = false
-      }
-    }
-    dialog.querySelector<HTMLElement>('[data-wvg-cancel]')!.addEventListener('click', close)
-    dialog.querySelector<HTMLElement>('.wvg-dialog-close')!.addEventListener('click', close)
-    ok.addEventListener('click', () => { void run() })
-    overlay.addEventListener('pointerdown', (event) => {
-      if (event.target === overlay) close()
-    })
-    document.body.append(overlay)
-    modal = overlay
-    modalKeyHandler = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('keydown', modalKeyHandler)
-    window.requestAnimationFrame(() => {
-      dialog.querySelector<HTMLButtonElement>('[data-wvg-cancel]')?.focus()
-    })
-  }
-
-  function closeModal(): void {
-    if (modalKeyHandler !== null) document.removeEventListener('keydown', modalKeyHandler)
-    modalKeyHandler = null
-    modal?.remove()
-    modal = null
-  }
-
-  function showToast(message: string): void {
-    document.querySelectorAll('.wvg-toast').forEach((node) => node.remove())
-    const toast = document.createElement('div')
-    toast.className = 'wvg-toast'
-    toast.textContent = message
-    document.body.append(toast)
-    window.clearTimeout(toastTimer)
-    toastTimer = window.setTimeout(() => toast.remove(), 3200)
   }
 
   // Initial data, then the official DOM is enhanced whenever it changes.
@@ -1187,7 +704,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     document.removeEventListener('dragstart', onDocumentDragStart, true)
     document.removeEventListener('dragend', onDocumentDragEnd, true)
     if (frame !== 0) window.cancelAnimationFrame(frame)
-    window.clearTimeout(toastTimer)
+    disposeToast()
     closeMenu()
     closeViewOptions()
     closeModal()

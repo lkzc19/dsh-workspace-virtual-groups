@@ -48,11 +48,6 @@ export function groupParents(manual: ManualGroups | undefined): Map<string, stri
   return parents
 }
 
-/** Parent of one group, or null when it sits at the top level. */
-export function parentOf(manual: ManualGroups | undefined, key: string): string | null {
-  return groupParents(manual).get(key) ?? null
-}
-
 /** True when `candidate` is nested anywhere below `ancestor`. */
 export function isDescendant(manual: ManualGroups | undefined, candidate: string, ancestor: string): boolean {
   const parents = groupParents(manual)
@@ -67,16 +62,22 @@ export function isDescendant(manual: ManualGroups | undefined, candidate: string
 }
 
 /**
- * Children of one parent (null = top level), in display order. Siblings compare
- * by `categoryOrder` position, then by creation order.
+ * Every group bucketed by parent, each bucket in display order. Built once per
+ * traversal so walking the tree never rebuilds the parent map per node.
  */
-export function childrenOf(manual: ManualGroups | undefined, parent: string | null): string[] {
+function childrenIndex(manual: ManualGroups | undefined): Map<string | null, string[]> {
   const parents = groupParents(manual)
   const position = new Map((manual?.categoryOrder ?? []).map((key, index) => [key, index]))
   const creation = new Map((manual?.categories ?? []).map((key, index) => [key, index]))
-  return (manual?.categories ?? [])
-    .filter(name => (parents.get(name) ?? null) === parent)
-    .sort((a, b) => {
+  const index = new Map<string | null, string[]>()
+  for (const name of manual?.categories ?? []) {
+    const parent = parents.get(name) ?? null
+    const bucket = index.get(parent) ?? []
+    bucket.push(name)
+    index.set(parent, bucket)
+  }
+  for (const bucket of index.values()) {
+    bucket.sort((a, b) => {
       const pa = position.get(a)
       const pb = position.get(b)
       if (pa !== undefined && pb !== undefined) return pa - pb
@@ -84,13 +85,21 @@ export function childrenOf(manual: ManualGroups | undefined, parent: string | nu
       if (pb !== undefined) return 1
       return (creation.get(a) ?? 0) - (creation.get(b) ?? 0)
     })
+  }
+  return index
+}
+
+/** Children of one parent (null = top level), in display order. */
+export function childrenOf(manual: ManualGroups | undefined, parent: string | null): string[] {
+  return [...(childrenIndex(manual).get(parent) ?? [])]
 }
 
 /** The whole group tree in display order: root first, then top-level groups. */
 export function groupTree(manual: ManualGroups | undefined): GroupNode[] {
   const nodes: GroupNode[] = [{ key: DEFAULT_GROUP, parent: null, depth: 0, source: 'builtin' }]
+  const index = childrenIndex(manual)
   const walk = (parent: string | null, depth: number): void => {
-    for (const key of childrenOf(manual, parent)) {
+    for (const key of index.get(parent) ?? []) {
       nodes.push({ key, parent, depth, source: 'manual' })
       walk(key, depth + 1)
     }
@@ -146,6 +155,36 @@ export function resolveCategory(manual: ManualGroups | undefined, workspaceId: s
   const assignment = manual?.assignments[workspaceId]
   if (assignment === undefined || assignment === null) return DEFAULT_GROUP
   return manual?.categories.includes(assignment) ? assignment : DEFAULT_GROUP
+}
+
+/** Overlay with every optional field materialized, as the browser half uses it. */
+export type NormalizedManual = Required<ManualGroups>
+
+/**
+ * Materialize the overlay for rendering: assignments to groups that no longer
+ * exist fall back to the built-in group, and the parent map is sanitized (the
+ * built-in group may be a parent, never a child).
+ */
+export function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
+  if (manual === undefined) {
+    return { categories: [], assignments: {}, categoryOrder: [], parents: {}, mode: 'virtual' }
+  }
+  const categories = [...new Set(manual.categories)].filter(name => name !== DEFAULT_GROUP)
+  const known = new Set(categories)
+  const assignments = Object.fromEntries(
+    Object.entries(manual.assignments).map(([workspaceId, category]): [string, string | null] => [
+      workspaceId,
+      category !== null && known.has(category) ? category : null,
+    ]),
+  )
+  const parents = Object.fromEntries(groupParents({ categories, assignments, parents: manual.parents }))
+  return {
+    categories,
+    assignments,
+    categoryOrder: (manual.categoryOrder ?? []).filter(key => known.has(key)),
+    parents,
+    mode: manual.mode === 'official' ? 'official' : 'virtual',
+  }
 }
 
 /** Names that may not be used for a new group. */

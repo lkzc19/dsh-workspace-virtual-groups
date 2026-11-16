@@ -10,6 +10,7 @@ import {
   groupParents,
   groupTree,
   isDescendant,
+  normalizeManual,
   removeGroup,
   resolveCategory,
   takenCategoryNames,
@@ -166,6 +167,41 @@ describe('walkRenderOrder', () => {
       member: (item, groupKey) => seq.push(`${groupKey}/${item}`),
     })
     expect(seq).toEqual(['#默认', '#子', '子/s1', '默认/d1', '#顶层', '顶层/t1'])
+  })
+})
+
+describe('normalizeManual', () => {
+  it('materializes an empty overlay', () => {
+    expect(normalizeManual(undefined)).toEqual({
+      categories: [],
+      assignments: {},
+      categoryOrder: [],
+      parents: {},
+      mode: 'virtual',
+    })
+  })
+
+  it('keeps the built-in group as a parent', () => {
+    const next = normalizeManual({
+      categories: ['子分组'],
+      assignments: {},
+      parents: { '子分组': DEFAULT_GROUP },
+    })
+    expect(next.parents).toEqual({ '子分组': DEFAULT_GROUP })
+  })
+
+  it('drops unknown assignments, parents and ordering entries', () => {
+    const next = normalizeManual({
+      categories: ['A', 'B'],
+      assignments: { w1: '幽灵', w2: 'B', w3: null },
+      categoryOrder: ['A', '幽灵'],
+      parents: { A: '幽灵', B: 'A' },
+      mode: 'official',
+    })
+    expect(next.assignments).toEqual({ w1: null, w2: 'B', w3: null })
+    expect(next.parents).toEqual({ B: 'A' })
+    expect(next.categoryOrder).toEqual(['A'])
+    expect(next.mode).toBe('official')
   })
 })
 
