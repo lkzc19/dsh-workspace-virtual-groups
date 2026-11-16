@@ -606,8 +606,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
     // be renamed, deleted or dragged: its menu stops after the two add actions.
     if (key !== DEFAULT_GROUP) {
       entries.push(
-        { separator: true },
         { label: '重命名分组', icon: 'dsw-icon-edit-outline-regular', onSelect: () => { openRenameDialog(key) } },
+        { separator: true },
         { label: '删除分组', icon: 'dsw-icon-trash-outline-regular', danger: true, onSelect: () => { requestDeleteGroup(key) } },
       )
     }
