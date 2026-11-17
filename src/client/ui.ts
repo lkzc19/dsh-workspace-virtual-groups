@@ -10,3 +10,8 @@ export function svgIcon(id: string, size: number): string {
 
 /** 层叠字形：新建分组按钮与菜单里的「添加分组」共用。 */
 export const LAYER_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1" stroke-linejoin="round" data-wvg-layer="1" aria-hidden="true"><path d="M8 1.8 14 5 8 8.2 2 5 8 1.8Z"></path><path d="M2 8 8 11.2 14 8"></path><path d="M2 11 8 14.2 14 11"></path></svg>'
+
+/** 只在值变化时写样式：每帧重写同一属性同样会触发 MutationObserver。 */
+export function setStyle(element: HTMLElement, property: string, value: string): void {
+  if (element.style.getPropertyValue(property) !== value) element.style.setProperty(property, value)
+}

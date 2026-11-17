@@ -24,7 +24,7 @@ import {
   type GroupDropMode,
   type NormalizedManual,
 } from '../core/grouping.ts'
-import { applyVisibility, resetVisibility } from './collapse.ts'
+import { applyVisibilityBatch, resetVisibility } from './collapse.ts'
 import { closeModal, openConfirmDialog, openNameDialog } from './dialogs.ts'
 import {
   ensureNewGroupButton,
@@ -33,7 +33,7 @@ import {
 } from './new-group-button.ts'
 import { closeMenu, openMenu, type MenuEntry } from './menu.ts'
 import { disposeToast, showToast } from './toast.ts'
-import { LAYER_ICON, svgIcon } from './ui.ts'
+import { LAYER_ICON, setStyle, svgIcon } from './ui.ts'
 import { closeViewOptions, ensureViewOptions } from './view-options.ts'
 import css from './styles.css?inline'
 
@@ -151,11 +151,6 @@ export function mountWorkspaceVirtualGroups(ctx: {
     void persist(manual).catch((reason) => {
       showToast(reason instanceof Error ? reason.message : String(reason))
     })
-  }
-
-  /** 只在值变化时写样式，避免自己触发的 mutation 又把自己叫醒。 */
-  function setStyle(element: HTMLElement, property: string, value: string): void {
-    if (element.style.getPropertyValue(property) !== value) element.style.setProperty(property, value)
   }
 
   /** 把 DOM 与状态通知合并到一帧里处理。 */
@@ -380,6 +375,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
 
     const visible = new Set<string>()
+    const visibility: Array<{ element: HTMLElement; visible: boolean }> = []
     let cursor = 0
     walkRenderOrder<HTMLElement>(manual, key => members.get(key) ?? [], {
       header: (key, depth) => {
@@ -390,24 +386,28 @@ export function mountWorkspaceVirtualGroups(ctx: {
           groupedHeaders.set(key, header)
           list!.append(header)
         }
-        const hidden = hiddenUnderCollapsed(key)
         setStyle(header, 'order', String(cursor++))
         setStyle(header, 'padding-left', `${HEADER_INDENT_START + depth * INDENT_STEP}px`)
-        applyVisibility(header, !hidden)
-          const expanded = collapsed.has(key) ? 'false' : 'true'
+        visibility.push({ element: header, visible: !hiddenUnderCollapsed(key) })
+        const expanded = collapsed.has(key) ? 'false' : 'true'
         if (header.getAttribute('aria-expanded') !== expanded) header.setAttribute('aria-expanded', expanded)
         const label = header.querySelector<HTMLElement>('.wvg-label')
         if (label !== null && label.textContent !== key) label.textContent = key
       },
       member: (section, groupKey, depth) => {
         setStyle(section, 'order', String(cursor++))
-        applyVisibility(section, !hiddenUnderCollapsed(groupKey) && !collapsed.has(groupKey))
+        visibility.push({
+          element: section,
+          visible: !hiddenUnderCollapsed(groupKey) && !collapsed.has(groupKey),
+        })
         const indent = `${PROJECT_INDENT_START + depth * INDENT_STEP}px`
         setStyle(section, '--dsh-workspace-indent', indent)
         writtenIndent.set(section, indent)
-        section.dataset.wvgIndent = '1'
+        if (section.dataset.wvgIndent !== '1') section.dataset.wvgIndent = '1'
       },
     })
+    // 折叠/展开统一在遍历结束后批量处理：集中写、读一次布局、再集中写。
+    applyVisibilityBatch(visibility)
     for (const [key, header] of groupedHeaders) {
       if (visible.has(key)) continue
       header.remove()

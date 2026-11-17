@@ -158,9 +158,10 @@ export function ensureViewOptions(host: ViewOptionsHost): void {
       if (meta.selectedExtra.length > 0) button.classList.remove(...meta.selectedExtra)
       button.querySelector(':scope > svg')?.remove()
     }
-    ours.className = meta.selectedExtra.length > 0
+    const selectedClass = meta.selectedExtra.length > 0
       ? `${meta.baseClass} ${meta.selectedExtra.join(' ')}`
       : meta.baseClass
+    if (ours.className !== selectedClass) ours.className = selectedClass
     if (meta.check !== null && ours.querySelector(':scope > svg') === null) {
       const holder = document.createElement('template')
       holder.innerHTML = meta.check
@@ -168,7 +169,7 @@ export function ensureViewOptions(host: ViewOptionsHost): void {
       if (check !== null) ours.append(check)
     }
   } else {
-    ours.className = meta.baseClass
+    if (ours.className !== meta.baseClass) ours.className = meta.baseClass
     ours.querySelector(':scope > svg')?.remove()
   }
 }

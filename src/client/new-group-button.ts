@@ -4,7 +4,7 @@
  * 官方的 header-actions 容器按两个 28px 按钮定宽并裁剪溢出，加第三个按钮就得
  * 把容器撑开——按钮消失时再把原始尺寸还原。
  */
-import { LAYER_ICON } from './ui.ts'
+import { LAYER_ICON, setStyle } from './ui.ts'
 
 export interface NewGroupButtonHost {
   /** 是否处于虚拟分组模式？按钮只在这种模式下存在。 */
@@ -29,9 +29,9 @@ function restoreSizing(actions: HTMLElement | null): void {
   if (actions === null) return
   const original = originalSizing.get(actions)
   if (original === undefined) return
-  actions.style.width = original.width
-  actions.style.minWidth = original.minWidth
-  actions.style.overflow = original.overflow
+  setStyle(actions, 'width', original.width)
+  setStyle(actions, 'min-width', original.minWidth)
+  setStyle(actions, 'overflow', original.overflow)
   originalSizing.delete(actions)
   widened.delete(actions)
 }
@@ -64,7 +64,7 @@ export function ensureNewGroupButton(host: NewGroupButtonHost): void {
     add.after(button)
   }
   if (button.previousElementSibling !== add) add.after(button)
-  button.setAttribute('aria-label', '新建分组')
+  if (button.getAttribute('aria-label') !== '新建分组') button.setAttribute('aria-label', '新建分组')
   button.removeAttribute('aria-keyshortcuts')
   button.removeAttribute('aria-expanded')
   if (button.querySelector('svg[data-wvg-layer="1"]') === null) button.innerHTML = LAYER_ICON
@@ -83,7 +83,7 @@ export function ensureNewGroupButton(host: NewGroupButtonHost): void {
     })
     widened.add(actions)
   }
-  actions.style.width = 'max-content'
-  actions.style.minWidth = 'max-content'
-  actions.style.overflow = 'visible'
+  setStyle(actions, 'width', 'max-content')
+  setStyle(actions, 'min-width', 'max-content')
+  setStyle(actions, 'overflow', 'visible')
 }

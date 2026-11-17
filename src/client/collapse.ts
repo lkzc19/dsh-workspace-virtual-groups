@@ -9,6 +9,9 @@
  * 官方行自带上下内边距和外边距，只过渡 height 会让行在第一帧先被撑大、
  * 结束时又在切换 `display: none` 的瞬间跳一下。因此这里固定用 `border-box`
  * 量高，并把上下内边距、上外边距一起过渡到 0，整行是“真正缩没”的。
+ *
+ * 一次折叠往往同时影响几十行，所以对外是批量接口：先集中写、再集中读一次布局、
+ * 最后集中写起点和终点，避免逐行读写交替造成的 N 次强制重排。
  */
 const DURATION_MS = 180
 const EASING = 'cubic-bezier(0.2, 0, 0, 1)'
@@ -29,8 +32,15 @@ interface RowState {
   initialized: boolean
 }
 
+/** 一行的自然尺寸，动画的终点（展开）或起点（折叠）以它为准。 */
+interface NaturalSize {
+  height: number
+  paddingTop: string
+  paddingBottom: string
+  marginTop: string
+}
+
 const states = new WeakMap<HTMLElement, RowState>()
-let activeAnimations = 0
 
 function reducedMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
@@ -51,7 +61,6 @@ function settle(element: HTMLElement, state: RowState, visible: boolean): void {
   if (state.timer !== 0) {
     window.clearTimeout(state.timer)
     state.timer = 0
-    activeAnimations -= 1
   }
   state.visible = visible
   clearAnimationStyles(element)
@@ -59,79 +68,104 @@ function settle(element: HTMLElement, state: RowState, visible: boolean): void {
 }
 
 /**
- * 让元素按 `visible` 显示或隐藏，变化过程带高度动画。
+ * 让一组元素按各自的 `visible` 显示或隐藏，变化过程带高度动画。
  * 重复调用安全：动画进行中再收到同一个目标状态会直接忽略。
  */
-export function applyVisibility(element: HTMLElement, visible: boolean): void {
-  let state = states.get(element)
-  if (state === undefined) {
-    state = { visible: element.style.display !== 'none', timer: 0, initialized: false }
-    states.set(element, state)
+export function applyVisibilityBatch(targets: ReadonlyArray<{ element: HTMLElement; visible: boolean }>): void {
+  const pending: Array<{
+    element: HTMLElement
+    visible: boolean
+    state: RowState
+    /** 被打断的动画：以当前实际高度续接，避免跳回自然高度。 */
+    startHeight: number | null
+  }> = []
+  for (const target of targets) {
+    const { element, visible } = target
+    let state = states.get(element)
+    if (state === undefined) {
+      state = { visible: element.style.display !== 'none', timer: 0, initialized: false }
+      states.set(element, state)
+    }
+    // 首次见到这个元素时直接落定：刚创建的行、或启动时就折叠着的分组，
+    // 不该播一次从有到无的动画。
+    if (!state.initialized) {
+      state.initialized = true
+      settle(element, state, visible)
+      continue
+    }
+    if (state.visible === visible) continue
+    if (!element.isConnected || reducedMotion()) {
+      settle(element, state, visible)
+      continue
+    }
+    const interrupted = state.timer !== 0
+    if (interrupted) {
+      window.clearTimeout(state.timer)
+      state.timer = 0
+    }
+    // 被打断时先记下当前高度，否则清掉内联样式后它会跳回自然尺寸再动画。
+    pending.push({
+      element,
+      visible,
+      state,
+      startHeight: interrupted ? element.getBoundingClientRect().height : null,
+    })
   }
-  // 首次见到这个元素时直接落定：刚创建的行、或启动时就折叠着的分组，
-  // 不该播一次从有到无的动画。
-  if (!state.initialized) {
-    state.initialized = true
-    settle(element, state, visible)
-    return
-  }
-  if (state.visible === visible) return
-  if (!element.isConnected || reducedMotion()) {
-    settle(element, state, visible)
-    return
-  }
-  if (state.timer !== 0) {
-    window.clearTimeout(state.timer)
-    state.timer = 0
-    activeAnimations -= 1
+  if (pending.length === 0) return
+
+  // 写：先恢复成自然状态，否则展开中的行（display: none）量不到尺寸。
+  for (const { element } of pending) {
+    clearAnimationStyles(element)
+    element.style.display = ''
   }
 
-  // 先按自然状态量一次：盒高、上下内边距、上外边距都以它为准。
-  clearAnimationStyles(element)
-  element.style.display = ''
-  const natural = element.getBoundingClientRect()
-  const computed = getComputedStyle(element)
-  const naturalPaddingTop = computed.paddingTop
-  const naturalPaddingBottom = computed.paddingBottom
-  const naturalMarginTop = computed.marginTop
+  // 读：一次布局量完所有行。
+  const sizes: NaturalSize[] = pending.map(({ element }) => {
+    const rect = element.getBoundingClientRect()
+    const computed = getComputedStyle(element)
+    return {
+      height: rect.height,
+      paddingTop: computed.paddingTop,
+      paddingBottom: computed.paddingBottom,
+      marginTop: computed.marginTop,
+    }
+  })
 
-  element.style.boxSizing = 'border-box'
-  element.style.overflow = 'hidden'
-  element.style.transition = 'none'
-  element.style.height = `${natural.height}px`
-  element.style.opacity = state.visible ? '1' : '0'
-  // 读一次布局，确保起点已生效，否则过渡会被合并掉。
-  void element.offsetHeight
+  // 写：起点（折叠从自然高度开始，展开从 0 开始；被打断的从当前高度续接）。
+  pending.forEach(({ element, visible, startHeight }, index) => {
+    const size = sizes[index]!
+    const from = startHeight ?? (visible ? 0 : size.height)
+    element.style.boxSizing = 'border-box'
+    element.style.overflow = 'hidden'
+    element.style.transition = 'none'
+    element.style.height = `${from}px`
+    element.style.opacity = visible ? '0' : '1'
+    element.style.paddingTop = visible ? '0px' : size.paddingTop
+    element.style.paddingBottom = visible ? '0px' : size.paddingBottom
+    element.style.marginTop = visible ? '0px' : size.marginTop
+  })
+  // 浏览器会把上面所有写入一起布局，这里只强制一次。
+  void pending[0]!.element.offsetHeight
 
-  element.style.transition = TRANSITION
-  if (visible) {
-    element.style.paddingTop = naturalPaddingTop
-    element.style.paddingBottom = naturalPaddingBottom
-    element.style.marginTop = naturalMarginTop
-    element.style.height = `${natural.height}px`
-    element.style.opacity = '1'
-  } else {
-    element.style.paddingTop = '0px'
-    element.style.paddingBottom = '0px'
-    element.style.marginTop = '0px'
-    element.style.height = '0px'
-    element.style.opacity = '0'
-  }
-
-  state.visible = visible
-  state.timer = window.setTimeout(() => settle(element, state!, visible), DURATION_MS + 20)
-  activeAnimations += 1
+  // 写：终点。
+  pending.forEach(({ element, visible, state }, index) => {
+    const size = sizes[index]!
+    element.style.transition = TRANSITION
+    element.style.height = visible ? `${size.height}px` : '0px'
+    element.style.opacity = visible ? '1' : '0'
+    element.style.paddingTop = visible ? size.paddingTop : '0px'
+    element.style.paddingBottom = visible ? size.paddingBottom : '0px'
+    element.style.marginTop = visible ? size.marginTop : '0px'
+    state.visible = visible
+    state.timer = window.setTimeout(() => settle(element, state, visible), DURATION_MS + 20)
+  })
 }
 
 /** 清除某个行上的动画状态，供清理列表时调用。 */
 export function resetVisibility(element: HTMLElement): void {
   const state = states.get(element)
   if (state !== undefined) {
-    if (state.timer !== 0) {
-      window.clearTimeout(state.timer)
-      state.timer = 0
-      activeAnimations -= 1
-    }
+    if (state.timer !== 0) window.clearTimeout(state.timer)
     states.delete(element)
   }
   clearAnimationStyles(element)
