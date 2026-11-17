@@ -24,6 +24,7 @@ import {
   type GroupDropMode,
   type NormalizedManual,
 } from '../core/grouping.ts'
+import { applyVisibility, resetVisibility } from './collapse.ts'
 import { closeModal, openConfirmDialog, openNameDialog } from './dialogs.ts'
 import {
   ensureNewGroupButton,
@@ -152,6 +153,11 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
+  /** 只在值变化时写样式，避免自己触发的 mutation 又把自己叫醒。 */
+  function setStyle(element: HTMLElement, property: string, value: string): void {
+    if (element.style.getPropertyValue(property) !== value) element.style.setProperty(property, value)
+  }
+
   /** 把 DOM 与状态通知合并到一帧里处理。 */
   function schedule(): void {
     if (disposed || frame !== 0) return
@@ -188,7 +194,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function clearSections(target: HTMLElement): void {
     for (const section of sectionsOf(target)) {
       section.style.order = ''
-      section.style.display = ''
+      resetVisibility(section)
       const original = originalIndent.get(section)
       // 只有缩进仍是本层写进去的那个值时才还原。如果期间官方树形视图改过它，
       // 就保留官方的值，不能还原成分组之前的值。
@@ -205,7 +211,10 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   function clearHeaders(): void {
-    for (const header of groupedHeaders.values()) header.remove()
+    for (const header of groupedHeaders.values()) {
+      resetVisibility(header)
+      header.remove()
+    }
     groupedHeaders.clear()
   }
 
@@ -382,18 +391,19 @@ export function mountWorkspaceVirtualGroups(ctx: {
           list!.append(header)
         }
         const hidden = hiddenUnderCollapsed(key)
-        header.style.order = String(cursor++)
-        header.style.paddingLeft = `${HEADER_INDENT_START + depth * INDENT_STEP}px`
-        header.style.display = hidden ? 'none' : ''
-          header.setAttribute('aria-expanded', collapsed.has(key) ? 'false' : 'true')
+        setStyle(header, 'order', String(cursor++))
+        setStyle(header, 'padding-left', `${HEADER_INDENT_START + depth * INDENT_STEP}px`)
+        applyVisibility(header, !hidden)
+          const expanded = collapsed.has(key) ? 'false' : 'true'
+        if (header.getAttribute('aria-expanded') !== expanded) header.setAttribute('aria-expanded', expanded)
         const label = header.querySelector<HTMLElement>('.wvg-label')
-        if (label !== null) label.textContent = key
+        if (label !== null && label.textContent !== key) label.textContent = key
       },
       member: (section, groupKey, depth) => {
-        section.style.order = String(cursor++)
-        section.style.display = hiddenUnderCollapsed(groupKey) || collapsed.has(groupKey) ? 'none' : ''
+        setStyle(section, 'order', String(cursor++))
+        applyVisibility(section, !hiddenUnderCollapsed(groupKey) && !collapsed.has(groupKey))
         const indent = `${PROJECT_INDENT_START + depth * INDENT_STEP}px`
-        section.style.setProperty('--dsh-workspace-indent', indent)
+        setStyle(section, '--dsh-workspace-indent', indent)
         writtenIndent.set(section, indent)
         section.dataset.wvgIndent = '1'
       },
