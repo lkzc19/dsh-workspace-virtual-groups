@@ -1,15 +1,14 @@
-/* Virtual group labels are the ONLY new visual element. Official project and
-   session rows keep their own classes, fonts, spacing, icons and actions.
-   Menus and dialogs mirror DSH's own section labels, context menu and modal
-   metrics instead of inventing a separate visual language. */
+/* 虚拟分组标题是唯一新增的视觉元素。官方的项目行与会话行保留自己的类名、
+   字体、间距、图标和操作。菜单与对话框沿用 DSH 自己的 section 标题、上下文
+   菜单和模态尺寸，而不是另造一套视觉语言。 */
 
 .wvg-list {
   display: flex !important;
   flex-direction: column;
 }
 
-/* Section label: same 36px row / 14px tertiary label as the official sidebar
-   section header, plus a chevron and a group action button. */
+/* 分组标题：沿用官方侧边栏 section 头的 36px 行高 / 14px 三级文字色，
+   额外加一个折叠箭头和分组操作按钮。 */
 .wvg-group {
   position: relative;
   display: flex;
@@ -66,7 +65,7 @@
   white-space: nowrap;
 }
 
-/* Match the workspace row's hover-only 24px action button. */
+/* 与工作区行那个只在悬停时出现的 24px 操作按钮保持一致。 */
 .wvg-more:not([data-wvg-native-icon]) {
   display: inline-flex;
   align-items: center;
@@ -141,7 +140,7 @@
   bottom: -2px;
 }
 
-/* Context menu: 16px radius surface, 4px padding, 12px rows, 13px labels. */
+/* 上下文菜单：16px 圆角面板、4px 内边距、12px 行高、13px 文字。 */
 .wvg-menu {
   position: fixed;
   z-index: 1100;
@@ -209,7 +208,7 @@
   background: var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.15));
 }
 
-/* Modal: 380px / 28px radius surface and 36px buttons, matching DSH dialogs. */
+/* 模态框：380px 宽、28px 圆角、36px 按钮，与 DSH 的对话框一致。 */
 .wvg-overlay {
   position: fixed;
   inset: 0;

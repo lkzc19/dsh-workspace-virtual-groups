@@ -1,6 +1,6 @@
 /**
- * Pure manual-group helpers: the built-in default group is the root of a tree,
- * user groups sit either at the top level or nested inside another group.
+ * 手动分组的纯工具函数：内置的「默认」分组是树根，普通分组要么在顶层，
+ * 要么嵌在别的分组里。
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -222,7 +222,7 @@ describe('removeGroup', () => {
 
   it('moves a top-level group\'s workspaces into the built-in group', () => {
     const next = removeGroup(manual, '个人')
-    // Only 个人's own members move; 工作 keeps its workspace and subtree.
+    // 只有「个人」自己的成员上移；「工作」保留它的工作区和子树。
     expect(next.assignments).toEqual({ w1: '工作', w2: '存档', w3: null })
     expect(next.parents).toEqual({ '工作': DEFAULT_GROUP, '存档': '工作' })
   })

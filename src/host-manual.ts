@@ -1,19 +1,18 @@
 /**
- * Runtime grouping overlay for dsh-workspace-virtual-groups: manual groups
- * created in the sidebar UI and per-workspace assignments. Stored in a
- * plugin-owned JSON sidecar (`$DSH_HOME/workspace-virtual-groups.manual.json`),
- * and writes are atomic (temp file + fsync + rename).
+ * dsh-workspace-virtual-groups 的运行时分组叠加层：侧边栏创建的分组和每个
+ * 工作区的归属。存放在插件自己的 JSON sidecar
+ * （`$DSH_HOME/workspace-virtual-groups.manual.json`），写入是原子的
+ * （临时文件 + fsync + rename）。
  *
- * The browser PUT route writes the whole overlay (idempotent, last write
- * wins); reads tolerate unknown fields while the write boundary checks that
- * assignments and ordering reference existing manual groups.
+ * 浏览器通过 PUT 整体写回（幂等，后写覆盖先写）；读取容忍未知字段，
+ * 写入边界才校验归属和排序引用的分组是否存在。
  */
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { DEFAULT_GROUP, type ManualGroups } from './core/types.ts'
 
-/** Default overlay location: `$DSH_HOME/workspace-virtual-groups.manual.json`. */
+/** 叠加层的默认位置：`$DSH_HOME/workspace-virtual-groups.manual.json`。 */
 export function defaultManualPath(): string {
   const home = process.env.DSH_HOME !== undefined && process.env.DSH_HOME !== ''
     ? process.env.DSH_HOME
@@ -22,13 +21,13 @@ export function defaultManualPath(): string {
 }
 
 /**
- * Parse + shape-validate a raw overlay document into a ManualGroups.
- * Validates types only — category references are checked at the write boundary
- * (validateManualGroups), because reads must tolerate hand-edited files.
- * @param raw - parsed JSON value.
- * @returns the normalized overlay.
- * @throws when the shape is malformed (non-mapping, bad names, duplicates,
- * the built-in group name, bad assignment values).
+ * 把原始叠加层文档解析并校验成 ManualGroups。
+ * 这里只校验类型；分组引用在写入边界（validateManualGroups）才检查，因为读取
+ * 必须容忍手工改过的文件。
+ * @param raw - 已解析的 JSON 值。
+ * @returns 规整后的叠加层。
+ * @throws 形状不合法时抛出（顶层不是映射、分组名非法或重复、使用内置分组名、
+ * 归属值非法）。
  */
 export function parseManualGroups(raw: unknown): ManualGroups {
   if (raw === undefined || raw === null) return { categories: [], assignments: {} }
@@ -114,7 +113,7 @@ export function parseManualGroups(raw: unknown): ManualGroups {
   return manual
 }
 
-/** Parse a list of unique, non-empty strings. */
+/** 解析一组去重且非空的字符串。 */
 function parseStringList(value: unknown, field: string): string[] {
   if (!Array.isArray(value)) {
     throw new Error(`workspace-virtual-groups.manual.json: ${field} must be a list`)
@@ -136,10 +135,9 @@ function parseStringList(value: unknown, field: string): string[] {
 }
 
 /**
- * Validate that assignments and ordering reference existing manual groups
- * (write boundary only).
- * @param manual - parsed overlay.
- * @throws when the overlay references groups that do not exist.
+ * 校验归属、排序与父级引用都指向已存在的分组（仅写入边界）。
+ * @param manual - 已解析的叠加层。
+ * @throws 引用了不存在的分组时抛出。
  */
 export function validateManualGroups(manual: ManualGroups): void {
   const groups = new Set(manual.categories)
@@ -163,8 +161,8 @@ export function validateManualGroups(manual: ManualGroups): void {
       throw new Error(`workspace-virtual-groups.manual.json: parent "${parent}" of "${child}" is not a group`)
     }
   }
-  // Nested groups form a forest; a cycle would make every walk over it
-  // non-terminating, and dropping it here keeps the browser half simple.
+  // 嵌套分组构成森林；一旦成环，任何遍历都无法终止，因此在写入时直接拒绝，
+  // 浏览器侧就不必再防。
   for (const child of Object.keys(parents)) {
     const seen = new Set<string>([child])
     let cursor = parents[child]
@@ -178,7 +176,7 @@ export function validateManualGroups(manual: ManualGroups): void {
   }
 }
 
-/** Read + parse the overlay file. A missing file yields an empty overlay. */
+/** 读取并解析叠加层文件；文件不存在时返回空的叠加层。 */
 export async function readManualGroups(path: string): Promise<ManualGroups> {
   let text: string
   try {
@@ -191,11 +189,10 @@ export async function readManualGroups(path: string): Promise<ManualGroups> {
 }
 
 /**
- * Atomically replace the overlay file: write a same-directory temp file,
- * fsync it, then rename over the target. A crash never leaves a torn JSON at
- * the real path (readers see either the old or the new file).
- * @param path - target file path.
- * @param manual - overlay to persist.
+ * 原子地替换叠加层文件：先写同目录的临时文件、fsync，再 rename 覆盖目标。
+ * 即使进程崩溃，真实路径上也不会出现半截 JSON（读取方只会看到旧文件或新文件）。
+ * @param path - 目标文件路径。
+ * @param manual - 要持久化的叠加层。
  */
 export async function writeManualGroups(path: string, manual: ManualGroups): Promise<void> {
   const json = `${JSON.stringify(manual, null, 2)}\n`

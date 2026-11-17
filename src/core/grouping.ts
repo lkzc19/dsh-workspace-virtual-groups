@@ -1,33 +1,30 @@
 /**
- * Pure manual-group tree helpers shared by the host half (validation) and the
- * browser half (rendering, drag and drop).
+ * 手动分组的纯树形工具，宿主侧（校验）和浏览器侧（渲染、拖拽）共用。
  *
- * Groups form a tree: the built-in default group is the root and is never
- * nested; user groups sit either at the top level (beside the root) or inside
- * another user group.
+ * 分组构成一棵树：内置的「默认」分组是根，永不嵌套；普通分组可以位于顶层，
+ * 也可以挂在任意分组（包括「默认」）下面。
  */
 import { DEFAULT_GROUP, type ManualGroups } from './types.ts'
 
-/** One group in display (depth-first) order. */
+/** 按显示顺序（深度优先）排列的一个分组。 */
 export interface GroupNode {
   key: string
-  /** Parent group name, or null for the root and top-level groups. */
+  /** 父分组名；根与顶层分组为 null。 */
   parent: string | null
-  /** Nesting level: root and top-level groups are 0, their children 1, … */
+  /** 嵌套层级：根与顶层分组为 0，其子级为 1，依此类推。 */
   depth: number
   source: 'builtin' | 'manual'
 }
 
 /**
- * Sanitized child → parent map. Unknown names, self-parenting, the built-in
- * group as a participant, and cycles are dropped, so a hand-edited overlay can
- * never produce an infinite walk.
+ * 清洗后的「子 → 父」映射。未知分组名、指向自身、以「默认」分组作为子级，以及
+ * 成环的条目都会被丢弃，因此手工改过的叠加层也不会导致无限遍历。
  */
 export function groupParents(manual: ManualGroups | undefined): Map<string, string> {
   const known = new Set(manual?.categories ?? [])
   const parents = new Map<string, string>()
   for (const [child, parent] of Object.entries(manual?.parents ?? {})) {
-    // The built-in group is a valid parent but never a child.
+    // 「默认」分组可以作为父级，但永远不能是子级。
     if (child === DEFAULT_GROUP || child === parent) continue
     if (!known.has(child)) continue
     if (parent !== DEFAULT_GROUP && !known.has(parent)) continue
@@ -48,7 +45,7 @@ export function groupParents(manual: ManualGroups | undefined): Map<string, stri
   return parents
 }
 
-/** True when `candidate` is nested anywhere below `ancestor`. */
+/** 当 `candidate` 位于 `ancestor` 子树中的任意层级时返回 true。 */
 export function isDescendant(manual: ManualGroups | undefined, candidate: string, ancestor: string): boolean {
   const parents = groupParents(manual)
   const seen = new Set<string>()
@@ -62,8 +59,8 @@ export function isDescendant(manual: ManualGroups | undefined, candidate: string
 }
 
 /**
- * Every group bucketed by parent, each bucket in display order. Built once per
- * traversal so walking the tree never rebuilds the parent map per node.
+ * 按父级分桶的所有分组，每个桶内已按显示顺序排好。每次遍历只构建一次，
+ * 避免逐节点重建父级映射。
  */
 function childrenIndex(manual: ManualGroups | undefined): Map<string | null, string[]> {
   const parents = groupParents(manual)
@@ -89,12 +86,12 @@ function childrenIndex(manual: ManualGroups | undefined): Map<string | null, str
   return index
 }
 
-/** Children of one parent (null = top level), in display order. */
+/** 某个父级（null 表示顶层）的直接子级，按显示顺序。 */
 export function childrenOf(manual: ManualGroups | undefined, parent: string | null): string[] {
   return [...(childrenIndex(manual).get(parent) ?? [])]
 }
 
-/** The whole group tree in display order: root first, then top-level groups. */
+/** 整棵分组树，按显示顺序：先根，再顶层分组。 */
 export function groupTree(manual: ManualGroups | undefined): GroupNode[] {
   const nodes: GroupNode[] = [{ key: DEFAULT_GROUP, parent: null, depth: 0, source: 'builtin' }]
   const index = childrenIndex(manual)
@@ -104,23 +101,21 @@ export function groupTree(manual: ManualGroups | undefined): GroupNode[] {
       walk(key, depth + 1)
     }
   }
-  // The built-in group comes first with its own subtree, then the top-level
-  // groups that sit beside it.
+  // 「默认」分组连同它的子树排在最前，紧随其后的是与它平级的顶层分组。
   walk(DEFAULT_GROUP, 1)
   walk(null, 0)
   return nodes
 }
 
-/** Receives the flattened render sequence of {@link walkRenderOrder}. */
+/** 接收 {@link walkRenderOrder} 展开后的渲染序列。 */
 export interface RenderEmitter<T> {
   header(key: string, depth: number): void
   member(item: T, groupKey: string, depth: number): void
 }
 
 /**
- * Walk groups in render order: a group emits its header, then its whole
- * subtree of nested groups, then its own members. Nested groups therefore
- * always sit above the projects they share a level with.
+ * 按渲染顺序遍历分组：先输出该分组的标题，再输出整棵子分组子树，最后输出它
+ * 自己的成员。因此同级里子分组总排在该层项目之前。
  */
 export function walkRenderOrder<T>(
   manual: ManualGroups | undefined,
@@ -145,25 +140,24 @@ export function walkRenderOrder<T>(
   for (const topLevel of children.get(null) ?? []) place(topLevel)
 }
 
-/** Display keys of every group (root first, depth-first). */
+/** 所有分组的显示名（先根，深度优先）。 */
 export function displayCategoryKeys(manual: ManualGroups | undefined): string[] {
   return groupTree(manual).map(entry => entry.key)
 }
 
-/** Resolve the group key a workspace renders under. */
+/** 解析某个工作区实际渲染在哪个分组下。 */
 export function resolveCategory(manual: ManualGroups | undefined, workspaceId: string): string {
   const assignment = manual?.assignments[workspaceId]
   if (assignment === undefined || assignment === null) return DEFAULT_GROUP
   return manual?.categories.includes(assignment) ? assignment : DEFAULT_GROUP
 }
 
-/** Overlay with every optional field materialized, as the browser half uses it. */
+/** 所有可选字段都已补齐的叠加层，浏览器侧直接使用。 */
 export type NormalizedManual = Required<ManualGroups>
 
 /**
- * Materialize the overlay for rendering: assignments to groups that no longer
- * exist fall back to the built-in group, and the parent map is sanitized (the
- * built-in group may be a parent, never a child).
+ * 把叠加层补齐成渲染用的形状：指向已不存在分组的归属回退到「默认」分组，
+ * 父级映射也做一次清洗（「默认」分组可作父级，不能作子级）。
  */
 export function normalizeManual(manual: ManualGroups | undefined): NormalizedManual {
   if (manual === undefined) {
@@ -187,12 +181,12 @@ export function normalizeManual(manual: ManualGroups | undefined): NormalizedMan
   }
 }
 
-/** Names that may not be used for a new group. */
+/** 不能再用作新分组名的集合。 */
 export function takenCategoryNames(manual: ManualGroups | undefined): Set<string> {
   return new Set<string>(displayCategoryKeys(manual))
 }
 
-/** Overlay patch produced when a group is deleted. */
+/** 删除分组后要写回叠加层的补丁。 */
 export interface GroupRemoval {
   categories: string[]
   assignments: Record<string, string | null>
@@ -201,9 +195,8 @@ export interface GroupRemoval {
 }
 
 /**
- * Delete one group without losing its contents: its workspaces and its child
- * groups move up one level — into the parent group, or into the built-in group
- * when it sits at the top level.
+ * 删除一个分组但不丢失内容：组内工作区与子分组上移一级——进入父分组；没有
+ * 父分组时进入「默认」分组。
  */
 export function removeGroup(manual: ManualGroups | undefined, key: string): GroupRemoval {
   const parent = groupParents(manual).get(key) ?? null
@@ -228,21 +221,21 @@ export function removeGroup(manual: ManualGroups | undefined, key: string): Grou
   }
 }
 
-/** Where a dragged group lands relative to the group it was dropped on. */
+/** 拖拽的分组相对落点分组的位置。 */
 export type GroupDropMode = 'before' | 'after' | 'inside'
 
-/** Patch to apply to an overlay after a group drag. */
+/** 拖拽分组后要写回叠加层的补丁。 */
 export interface GroupMove {
   parents: Record<string, string>
   categoryOrder: string[]
 }
 
-/** Copy of the overlay's parents, sanitized, as a plain record. */
+/** 叠加层父级映射的副本，清洗后以普通对象返回。 */
 function parentsRecord(manual: ManualGroups | undefined): Record<string, string> {
   return Object.fromEntries(groupParents(manual))
 }
 
-/** No-op patch, used when a drop is refused. */
+/** 空补丁：拖放被拒绝时原样返回。 */
 function unchanged(manual: ManualGroups | undefined): GroupMove {
   return {
     parents: parentsRecord(manual),
@@ -251,15 +244,13 @@ function unchanged(manual: ManualGroups | undefined): GroupMove {
 }
 
 /**
- * Move `key` relative to `target`.
+ * 把 `key` 移动到 `target` 的相对位置。
  *
- * - `inside` nests it under the target (dropping onto the built-in group
- *   returns it to the top level);
- * - `before` / `after` makes it a sibling of the target at the target's level.
+ * - `inside`：挂到目标下面，目标可以是「默认」分组；
+ * - `before` / `after`：成为目标在同级的兄弟。
  *
- * The move is refused — the overlay comes back unchanged — when the target is
- * the dragged group itself or sits inside its subtree, which would create a
- * cycle; the built-in default group can never be dragged.
+ * 当目标是自身、或位于自身子树内（会成环）时拒绝移动，叠加层原样返回；
+ * 「默认」分组永远不可拖动。
  */
 export function applyGroupMove(
   manual: ManualGroups | undefined,
@@ -279,7 +270,7 @@ export function applyGroupMove(
 
   const order = displayCategoryKeys(manual).filter(entry => entry !== DEFAULT_GROUP && entry !== key)
   if (mode === 'inside') {
-    // Append: the moved group becomes the target's last child.
+    // 追加到末尾：被移动的分组成为目标的最后一个子级。
     order.push(key)
   } else {
     const index = order.indexOf(target)

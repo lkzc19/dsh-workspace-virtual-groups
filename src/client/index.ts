@@ -1,22 +1,20 @@
 /**
- * dsh-workspace-virtual-groups client half.
+ * dsh-workspace-virtual-groups 的客户端侧。
  *
- * This is deliberately NOT a replacement for the official Workspace browser.
- * It mounts a thin grouping layer that reorders the official sidebar sections
- * and inserts group labels between them; every official row keeps its markup,
- * styles, hover actions, search and keyboard behavior.
+ * 它刻意不去替换官方的 Workspace 浏览器，而是在上面挂一层很薄的分组层：
+ * 重排官方侧边栏的 section，并在其间插入分组标题。官方行保留原有的标记、
+ * 样式、悬停操作、搜索和键盘行为。
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-// Type-only service merges: the Workspace controller and the navigation face
-// that owns the directory picker / session creation.
+// 仅类型的服务合并：Workspace 控制器，以及负责目录选择与会话创建的导航面。
 import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { mountWorkspaceVirtualGroups } from './dom-groups.ts'
 
-/** Required services: the Workspace controller and its navigation face. */
+/** 必需服务：Workspace 控制器及其导航面。 */
 export const inject = ['workspaces', 'uiWorkspace']
 
-/** Mount the grouping layer and remove it with the client fiber. */
+/** 挂载分组层，并随客户端 fiber 一同卸载。 */
 export function apply(ctx: ClientContext): void {
   ctx.effect(
     () => mountWorkspaceVirtualGroups(ctx as unknown as Parameters<typeof mountWorkspaceVirtualGroups>[0]),

@@ -1,6 +1,6 @@
 /**
- * Build the host half as a self-contained ESM module with no runtime
- * node_modules requirements beyond Node itself and the DSH web server service.
+ * 把宿主侧打成自包含的 ESM 模块：运行时除 Node 本身和 DSH 的 webserver 服务外，
+ * 不依赖任何 node_modules。
  */
 import { resolve } from 'node:path'
 import { createRequire } from 'node:module'

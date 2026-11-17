@@ -1,21 +1,20 @@
 /**
- * Context menu used by group headers.
+ * 分组标题使用的上下文菜单。
  *
- * One menu is open at a time; opening a new one closes the previous. Clicks
- * outside and Escape close it, and focus returns to the trigger so the
- * hover-only action button stays visible.
+ * 同一时刻只开一个；打开新菜单会先关掉旧的。点击外部或按 Esc 关闭，关闭后
+ * 焦点回到触发元素，好让只在悬停时出现的操作按钮保持可见。
  */
 import { svgIcon } from './ui.ts'
 
-/** One row of a menu: an action, or a separator line. */
+/** 菜单中的一行：一个动作，或一条分隔线。 */
 export type MenuEntry =
   | { separator: true }
   | {
     separator?: false
     label: string
-    /** DSH sprite icon id. */
+    /** DSH 雪碧图标 id。 */
     icon?: string
-    /** Inline SVG markup, for glyphs the sprite does not have. */
+    /** 行内 SVG 标记，用于雪碧图标库里没有的字形。 */
     svg?: string
     danger?: boolean
     onSelect(): void
@@ -49,7 +48,7 @@ function separator(): HTMLElement {
   return element
 }
 
-/** Open a menu anchored at `anchor`, positioned at (x, y). */
+/** 在 (x, y) 处打开菜单，并把关闭后的焦点还给 `anchor`。 */
 export function openMenu(anchor: HTMLElement, ariaLabel: string, entries: readonly MenuEntry[], x: number, y: number): void {
   closeMenu()
   const panel = document.createElement('div')
@@ -81,7 +80,7 @@ export function openMenu(anchor: HTMLElement, ariaLabel: string, entries: readon
   panel.querySelector<HTMLButtonElement>('.wvg-menu-item')?.focus()
 }
 
-/** Close the open menu, if any, and restore focus to its trigger. */
+/** 关闭当前菜单（若有），并把焦点还给触发元素。 */
 export function closeMenu(): void {
   const openHeaders = [...document.querySelectorAll<HTMLElement>('.wvg-group.wvg-menu-open')]
   if (menuPointerClose !== null) document.removeEventListener('pointerdown', menuPointerClose, true)
@@ -92,8 +91,8 @@ export function closeMenu(): void {
   menuAnchor = null
   menu?.remove()
   menu = null
-  // Keep the hover-only trigger visible while returning focus to it; once focus
-  // lands, :focus-within keeps it visible after the class is removed.
+  // 归还焦点期间要让只在悬停时出现的触发按钮保持可见；焦点落位后由
+  // :focus-within 接管，类名移除也不会消失。
   if (anchor?.isConnected) anchor.focus()
   openHeaders.forEach((header) => header.classList.remove('wvg-menu-open'))
 }

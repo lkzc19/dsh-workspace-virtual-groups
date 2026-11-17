@@ -1,6 +1,5 @@
 /**
- * Manual-overlay tests: shape validation, group-reference validation at the
- * write boundary, and the atomic file round-trip.
+ * 叠加层测试：形状校验、写入边界的分组引用校验，以及文件原子往返。
  */
 import { describe, expect, it } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'

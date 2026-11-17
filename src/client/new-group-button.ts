@@ -1,25 +1,24 @@
 /**
- * The layer-icon "new group" button beside the official add-workspace button.
+ * 官方「添加工作区」按钮旁边的层叠图标按钮，用来新建分组。
  *
- * The official header-actions container is sized for two 28px buttons and
- * clips overflow, so a third button needs the container widened — and the
- * original sizing put back when the button goes away.
+ * 官方的 header-actions 容器按两个 28px 按钮定宽并裁剪溢出，加第三个按钮就得
+ * 把容器撑开——按钮消失时再把原始尺寸还原。
  */
 import { LAYER_ICON } from './ui.ts'
 
 export interface NewGroupButtonHost {
-  /** Virtual grouping active? The button only exists in that mode. */
+  /** 是否处于虚拟分组模式？按钮只在这种模式下存在。 */
   isVirtual(): boolean
-  /** Open the create-group dialog. */
+  /** 打开新建分组对话框。 */
   onCreate(): void
 }
 
-/** Official header-actions sizing before this layer widened it. */
+/** 本层撑开容器之前的官方 header-actions 尺寸。 */
 const originalSizing = new WeakMap<HTMLElement, { width: string; minWidth: string; overflow: string }>()
-/** Containers this layer widened, so an unmount can restore all of them. */
+/** 本层撑开过的容器，卸载时据此全部还原。 */
 const widened = new Set<HTMLElement>()
 
-/** The official add-workspace button, located by its sprite icon. */
+/** 官方「添加工作区」按钮，通过它的雪碧图标定位。 */
 export function officialAddButton(): HTMLButtonElement | null {
   const use = document.querySelector<SVGUseElement>('use[href="#dsw-icon-project-add-outline-regular"]')
   const button = use?.closest('button')
@@ -37,7 +36,7 @@ function restoreSizing(actions: HTMLElement | null): void {
   widened.delete(actions)
 }
 
-/** Remove every injected button and restore the containers it widened. */
+/** 移除所有注入的按钮，并还原被撑开的容器。 */
 export function removeNewGroupButtons(): void {
   document.querySelectorAll<HTMLElement>('[data-wvg-new-group]').forEach((node) => {
     const actions = node.parentElement
@@ -47,7 +46,7 @@ export function removeNewGroupButtons(): void {
   for (const actions of [...widened]) restoreSizing(actions)
 }
 
-/** Keep exactly one layer-icon button in place, or none outside virtual mode. */
+/** 保证恰好存在一个层叠图标按钮；非虚拟模式下不保留。 */
 export function ensureNewGroupButton(host: NewGroupButtonHost): void {
   if (!host.isVirtual()) {
     removeNewGroupButtons()

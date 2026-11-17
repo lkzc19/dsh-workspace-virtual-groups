@@ -1,7 +1,6 @@
 /**
- * Modal dialogs: a shared shell (header, body, actions, close/Escape/backdrop
- * wiring) plus the two dialogs this plugin needs — naming a group and
- * confirming a deletion.
+ * 模态对话框：一个共用的外壳（标题、正文、操作区，以及关闭/Esc/点遮罩的接线），
+ * 加上本插件需要的两个对话框——给分组命名和确认删除。
  */
 import { svgIcon } from './ui.ts'
 
@@ -15,7 +14,7 @@ interface DialogParts {
   close(): void
 }
 
-/** Build the shared modal shell; callers fill the body and the confirm action. */
+/** 构建共用的模态外壳；调用方负责填正文和确认动作。 */
 function createDialog(title: string, bodyHTML: string, confirmLabel: string, confirmClass: string): DialogParts {
   closeModal()
   const overlay = document.createElement('div')
@@ -42,8 +41,7 @@ function createDialog(title: string, bodyHTML: string, confirmLabel: string, con
 }
 
 /**
- * Ask for a group name. `submit` returns an error message to keep the dialog
- * open, or null when the change was applied.
+ * 询问分组名。`submit` 返回错误信息时对话框不关闭；返回 null 表示修改已生效。
  */
 export function openNameDialog(
   title: string,
@@ -100,7 +98,7 @@ export function openNameDialog(
   })
 }
 
-/** Ask for confirmation before a destructive action. */
+/** 破坏性操作前询问一次确认。 */
 export function openConfirmDialog(title: string, message: string, confirm: () => Promise<void>): void {
   const { dialog, error, ok, close } = createDialog(
     title,
@@ -131,7 +129,7 @@ export function openConfirmDialog(title: string, message: string, confirm: () =>
   })
 }
 
-/** Close the open dialog, if any. */
+/** 关闭当前打开的对话框（若有）。 */
 export function closeModal(): void {
   if (modalKeyHandler !== null) document.removeEventListener('keydown', modalKeyHandler)
   modalKeyHandler = null

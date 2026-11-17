@@ -1,16 +1,13 @@
 /**
- * Virtual workspace groups as a thin layer over the official sidebar browser.
+ * 在官方侧边栏浏览器之上的一层很薄的虚拟工作区分组。
  *
- * The official `@deepseek-ai/dsh-client-ui-workspace` browser is left
- * completely intact: its row markup, icons, hover actions, search, keyboard
- * handling and view options are the ones users already know. This module only
- * reorders the official workspace sections (via CSS `order` on a flex list)
- * and inserts group labels between them. No official row is cloned, replaced
- * or restyled.
+ * 官方 `@deepseek-ai/dsh-client-ui-workspace` 浏览器完全保持原样：行标记、
+ * 图标、悬停操作、搜索、键盘处理、视图选项，都还是用户熟悉的那一套。本模块
+ * 只做两件事——用 CSS `order` 重排官方的工作区 section，并在它们之间插入分组
+ * 标题。不克隆、不替换、也不改写任何官方行的样式。
  *
- * The grouping overlay is the same one the host half serves: manual groups and
- * per-workspace assignments are persisted in
- * `$DSH_HOME/workspace-virtual-groups.manual.json`.
+ * 分组叠加层与宿主侧提供的是同一份：手动分组和每个工作区的归属都持久化在
+ * `$DSH_HOME/workspace-virtual-groups.manual.json`。
  */
 import type { ManualGroups } from '../core/types.ts'
 import { DEFAULT_GROUP } from '../core/types.ts'
@@ -40,28 +37,27 @@ import { closeViewOptions, ensureViewOptions } from './view-options.ts'
 import css from './styles.css?inline'
 
 /**
- * Drag payload MIME. Firefox only starts a drag when `dataTransfer` carries
- * data; nothing reads the value back — the dragged item is tracked in
- * `dragId` / `draggingGroup`.
+ * 拖拽载荷的 MIME。Firefox 要求 `dataTransfer` 里有数据才会开始拖拽；这个值
+ * 本身没人读回——被拖的是哪个工作区/分组由 `dragId` / `draggingGroup` 记录。
  */
 const DRAG_MIME = 'application/x-dsh-workspace-virtual-groups'
 
 const MANUAL_ROUTE = '/workspace-virtual-groups/manual'
 const COLLAPSED_KEY = 'dsh.workspace.virtual-groups.collapsed.v1'
-/** Header padding at depth 0, and the extra step per nesting level. */
+/** 分组标题在深度 0 的左内边距，以及每加深一级增加的步长。 */
 const HEADER_INDENT_START = 12
 const INDENT_STEP = 16
-/** Project rows sit one step further in than the header of their group. */
+/** 项目行比所属分组的标题再向内缩进一级。 */
 const PROJECT_INDENT_START = 20
 
-/** Fetch the runtime overlay. */
+/** 拉取运行时叠加层。 */
 async function loadState(): Promise<NormalizedManual> {
   const response = await fetch(MANUAL_ROUTE, { cache: 'no-cache' })
   if (!response.ok) throw new Error(`manual request failed: ${response.status}`)
   return normalizeManual((await response.json()) as ManualGroups)
 }
 
-/** Persist the whole overlay. The host validates and writes atomically. */
+/** 整体写回叠加层；由宿主校验并原子写入。 */
 async function putManual(manual: NormalizedManual): Promise<void> {
   const response = await fetch(MANUAL_ROUTE, {
     method: 'PUT',
@@ -95,10 +91,10 @@ function writeCollapsed(collapsed: ReadonlySet<string>): void {
 }
 
 /**
- * Mount the grouping layer over the official Workspace browser.
+ * 在官方 Workspace 浏览器之上挂载分组层。
  *
- * @param ctx - client context carrying the Workspace controller snapshot.
- * @returns the disposer that removes every DOM node, listener and style.
+ * @param ctx - 携带 Workspace 控制器快照的客户端上下文。
+ * @returns 卸载函数，会移除本层添加的全部 DOM、监听器和样式。
  */
 export function mountWorkspaceVirtualGroups(ctx: {
   workspaces: {
@@ -126,9 +122,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
   let saveQueue: Promise<void> = Promise.resolve()
   const groupedHeaders = new Map<string, HTMLElement>()
   const collapsed = readCollapsed()
-  /** Official `--dsh-workspace-indent` value before this layer touched a section. */
+  /** 本层改动某个 section 之前，官方的 `--dsh-workspace-indent` 值。 */
   const originalIndent = new WeakMap<HTMLElement, string>()
-  /** Indent value this layer last wrote into a section (one per nesting depth). */
+  /** 本层最近一次写入该 section 的缩进值（按嵌套深度区分）。 */
   const writtenIndent = new WeakMap<HTMLElement, string>()
 
   const viewOptionsHost = {
@@ -141,7 +137,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     onCreate: (): void => openCreateGroupDialog(),
   }
 
-  /** Switch between virtual grouping and the official grouping modes. */
+  /** 在虚拟分组和官方分组方式之间切换。 */
   function setViewMode(mode: 'virtual' | 'official'): void {
     if (!loaded) return
     if (viewMode === mode) {
@@ -156,7 +152,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Coalesce DOM/state notifications into one animation frame. */
+  /** 把 DOM 与状态通知合并到一帧里处理。 */
   function schedule(): void {
     if (disposed || frame !== 0) return
     frame = window.requestAnimationFrame(() => {
@@ -165,13 +161,13 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Find the official workspace list (not the search tree). */
+  /** 找到官方的工作区列表（不含搜索结果树）。 */
   function findList(): HTMLElement | null {
     const row = document.querySelector<HTMLElement>('[data-row-key^="workspace:"]')
     return row?.closest<HTMLElement>('[role="tree"]') ?? null
   }
 
-  /** Direct workspace sections of the official list. */
+  /** 官方列表的直接子级里，属于工作区的那些 section。 */
   function sectionsOf(target: HTMLElement): HTMLElement[] {
     return Array.from(target.children).filter((element): element is HTMLElement =>
       element instanceof HTMLElement
@@ -184,7 +180,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     return key.startsWith('workspace:') ? key.slice('workspace:'.length) : undefined
   }
 
-  /** The official list is a block container; a flex column lets `order` work. */
+  /** 官方列表是块级容器；改成 flex 列布局后 `order` 才能生效。 */
   function markList(target: HTMLElement): void {
     target.classList.add('wvg-list')
   }
@@ -194,9 +190,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
       section.style.order = ''
       section.style.display = ''
       const original = originalIndent.get(section)
-      // Only undo the indent when it is still the value this layer wrote. If
-      // the official tree view changed it in the meantime, leave the official
-      // value in place instead of restoring the pre-grouping one.
+      // 只有缩进仍是本层写进去的那个值时才还原。如果期间官方树形视图改过它，
+      // 就保留官方的值，不能还原成分组之前的值。
       const written = writtenIndent.get(section)
       if (original !== undefined && written !== undefined
         && section.style.getPropertyValue('--dsh-workspace-indent') === written) {
@@ -221,11 +216,9 @@ export function mountWorkspaceVirtualGroups(ctx: {
     clearHeaders()
   }
 
-  /** Open the create-group dialog. Shared by the repurposed header button. */
   /**
-   * Create a group. Without a parent it lands at the top level; with one it
-   * becomes that group's child (the built-in group is the top level itself, so
-   * a "child" of it is just another top-level group).
+   * 新建分组。没有父级时落在顶层；给了父级就成为它的子分组，「默认」分组
+   * 也包括在内。
    */
   function openCreateGroupDialog(parent: string | null = null): void {
     const parentKey = parent
@@ -254,7 +247,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     header.setAttribute('aria-label', key)
     header.draggable = key !== DEFAULT_GROUP
     header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span><button type="button" class="wvg-more" aria-label="分组操作" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`
-    // Group names are user input; never interpolate them into innerHTML.
+    // 分组名是用户输入，绝不能拼进 innerHTML。
     header.querySelector<HTMLElement>('.wvg-more')?.setAttribute('aria-label', `分组“${key}”的操作`)
     header.addEventListener('dragstart', (event) => {
       if (key === DEFAULT_GROUP) {
@@ -292,7 +285,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     return header
   }
 
-  /** Give group action buttons the exact native icon-button class. */
+  /** 让分组操作按钮用上官方的原生图标按钮类名。 */
   function applyNativeIconClasses(): void {
     const rowAction = document.querySelector<HTMLButtonElement>('[data-row-key^="workspace:"] [data-context-menu-trigger]')
     const nativeClass = rowAction?.className ?? officialAddButton()?.className ?? ''
@@ -307,11 +300,11 @@ export function mountWorkspaceVirtualGroups(ctx: {
     })
   }
 
-  /** Apply grouping: headers, order, collapse and the new-group button. */
+  /** 应用分组：标题、顺序、折叠状态，以及新建分组按钮。 */
   function reconcile(): void {
     if (disposed) return
-    // Do not render or allow edits before the overlay has loaded: persisting an
-    // empty placeholder would wipe existing groups if the manual request failed.
+    // 叠加层加载完成前既不渲染也不允许编辑：若手动请求失败，把空占位持久化
+    // 下去会把已有分组全部抹掉。
     if (!loaded) {
       cleanupList()
       removeNewGroupButtons()
@@ -334,18 +327,17 @@ export function mountWorkspaceVirtualGroups(ctx: {
       cleanupList()
       return
     }
-    // The official "workspace tree" mode nests projects by path. Flattening it
-    // into virtual groups would destroy that hierarchy, so leave it untouched.
-    // Capture the official indent before overwriting it; sections can be reused
-    // across renders, so a WeakMap keeps the original per element.
+    // 官方的「按工作区树」模式按路径嵌套项目；把它拍平成虚拟分组会毁掉这层
+    // 层级，所以原样放过。覆盖缩进前先记下官方值；section 会跨渲染复用，
+    // 因此用 WeakMap 按元素保存原始值。
     for (const section of sections) {
       if (!originalIndent.has(section)) originalIndent.set(section, section.style.getPropertyValue('--dsh-workspace-indent'))
     }
     const inOfficialTree = sections.some((section) => {
       const original = originalIndent.get(section) ?? ''
       if (Number.parseFloat(original) > 0) return true
-      // A reused node whose inline indent no longer matches ours was changed by
-      // the official tree view between reconciles.
+      // 复用的节点若行内缩进已不等于本层写的值，说明两次协调之间官方树形视图
+      // 改过它。
       const written = writtenIndent.get(section)
       return section.dataset.wvgIndent === '1'
         && written !== undefined
@@ -367,7 +359,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       else bucket.push(section)
     }
 
-    // Collapsed state is inherited: a collapsed ancestor hides the whole subtree.
+    // 折叠状态会继承：祖先折叠时整棵子树都隐藏。
     const parentByKey = groupParents(manual)
     const hiddenUnderCollapsed = (key: string): boolean => {
       let cursor = parentByKey.get(key)
@@ -441,9 +433,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
   }
 
   /**
-   * Drop zone inside a group header: the outer thirds insert as a sibling, the
-   * middle nests. Every drop on the built-in group means "move to the top
-   * level", because that group is the root and can never have siblings.
+   * 分组标题内的落点区域：上下三分之一插入为同级，中间三分之一变成子分组。
+   * 「默认」分组是根、不可能有同级，因此落在它上面的任何位置都按嵌套处理。
    */
   function dropMode(event: DragEvent, header: HTMLElement): GroupDropMode {
     if ((header.dataset.wvgGroup ?? '') === DEFAULT_GROUP) return 'inside'
@@ -454,7 +445,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     return 'inside'
   }
 
-  /** A group cannot be dropped on itself or anywhere inside its own subtree. */
+  /** 分组不能落到自己身上，也不能落到自己的子树里。 */
   function canDropGroup(target: string): boolean {
     const dragged = draggingGroup
     if (dragged === null || target === dragged) return false
@@ -537,7 +528,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
   }
 
-  /** Apply a group drag: nest under the target, or sit beside it. */
+  /** 应用一次分组拖拽：挂到目标下面，或成为它的同级。 */
   async function moveGroup(draggedKey: string, targetKey: string, mode: GroupDropMode): Promise<void> {
     const next = applyGroupMove(manual, draggedKey, targetKey, mode)
     const parentsOf = (record: Record<string, string>): string => Object.entries(record)
@@ -548,8 +539,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
       && next.categoryOrder.join('\u0000') === manual.categoryOrder.join('\u0000')) {
       return
     }
-    // Reveal the destination so the dragged group does not vanish into a
-    // collapsed parent.
+    // 展开目标，避免被拖的分组落进折叠的父级里而看不见。
     const destination = next.parents[draggedKey]
     if (destination !== undefined && collapsed.delete(destination)) writeCollapsed(collapsed)
     try {
@@ -574,14 +564,14 @@ export function mountWorkspaceVirtualGroups(ctx: {
     }
   }
 
-  /** Serialize overlay writes so two fast drags cannot race each other. */
+  /** 串行化叠加层写入，避免两次快速拖拽互相覆盖。 */
   function persist(next: NormalizedManual): Promise<void> {
     const run = saveQueue.then(async () => {
       await putManual(next)
       manual = next
       schedule()
     })
-    // Keep the queue alive after a rejection; the caller still sees the error.
+    // 某次写入失败后队列仍要继续，同时把错误交给调用方。
     saveQueue = run.catch(() => {})
     return run
   }
@@ -602,8 +592,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
       },
       { label: '添加分组', svg: LAYER_ICON, onSelect: () => { openCreateGroupDialog(key) } },
     ]
-    // The built-in group may hold workspaces and nested groups, but it can never
-    // be renamed, deleted or dragged: its menu stops after the two add actions.
+    // 「默认」分组可以放工作区和子分组，但不能重命名、删除或拖动，
+    // 因此它的菜单只有两个添加类动作。
     if (key !== DEFAULT_GROUP) {
       entries.push(
         { label: '重命名分组', icon: 'dsw-icon-edit-outline-regular', onSelect: () => { openRenameDialog(key) } },
@@ -631,7 +621,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
         category === from ? name : category,
       ]),
     )
-    // The renamed group can be a parent as well as a child.
+    // 被重命名的分组既可能是父级，也可能是子级。
     const parents = Object.fromEntries(
       Object.entries(manual.parents).map(([child, parent]) => [
         child === from ? name : child,
@@ -653,7 +643,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     await persist({ ...manual, ...removeGroup(manual, key) })
   }
 
-  // Initial data, then the official DOM is enhanced whenever it changes.
+  // 先做一次初始加载；之后的 DOM 变化由下面的观察器跟进。
   void loadState().then((state) => {
     if (disposed) return
     manual = state
@@ -668,9 +658,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
     schedule()
   })
 
-  // The conversation streams below the sidebar; observing every mutation would
-  // reconcile once per frame for no reason. Only schedule when the sidebar
-  // list, its header actions, or an official/injected menu is touched.
+  // 对话内容也在页面里不断变动，若对所有 mutation 都响应，每帧都会白跑一次
+  // 协调。只有侧边栏列表、它的头部操作区，或官方/注入的菜单被碰到时才安排。
   const OBSERVED_SELECTOR = [
     '[role="tree"]',
     '[role="menu"]',

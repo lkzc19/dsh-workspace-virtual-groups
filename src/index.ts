@@ -1,14 +1,13 @@
 /**
- * dsh-workspace-virtual-groups host half: serves and persists the manual
- * grouping overlay.
+ * dsh-workspace-virtual-groups 的宿主侧：提供并持久化手动分组叠加层。
  *
- * Routes:
- * - `GET /workspace-virtual-groups/manual` — current manual overlay (groups +
- *   assignments + ordering + mode), read directly from the plugin sidecar.
- * - `PUT /workspace-virtual-groups/manual` — replace the whole overlay,
- *   validated and written atomically to the plugin-owned JSON sidecar.
+ * 路由：
+ * - `GET /workspace-virtual-groups/manual` — 当前叠加层（分组、归属、排序、
+ *   模式），直接从插件的 sidecar 读取。
+ * - `PUT /workspace-virtual-groups/manual` — 整体替换叠加层，校验后原子写入
+ *   插件自己的 JSON sidecar。
  *
- * Core workspace.json / session storage is never touched.
+ * 不触碰官方的 workspace.json 与会话存储。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { GroupsContext } from './context-types.ts'
@@ -20,29 +19,29 @@ import {
   writeManualGroups,
 } from './host-manual.ts'
 
-/** Plugin identity for cordis.yml rows. */
+/** 插件在 cordis.yml 行里的标识。 */
 export const name = '@lkzc19/dsh-workspace-virtual-groups'
 
-/** Services required before mounting: the webserver route. */
+/** 挂载前必须就绪的服务：webserver 路由。 */
 export const inject = ['webServer']
 
-/** Cap on the PUT body: the overlay is tiny; anything bigger is a client bug. */
+/** PUT 体积上限：叠加层很小，超出只能是客户端的问题。 */
 const MAX_MANUAL_BODY_BYTES = 64 * 1024
 
-/** Error with an HTTP status, mapped to a plain-text 4xx/5xx response. */
+/** 带 HTTP 状态码的错误，最终映射为纯文本 4xx/5xx 响应。 */
 class HttpError extends Error {
   constructor(readonly status: number, message: string) {
     super(message)
   }
 }
 
-/** Write a plain-text error response with the given status. */
+/** 按给定状态码写出纯文本错误响应。 */
 function writeError(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8' })
   res.end(message)
 }
 
-/** Collect the request body as UTF-8 text, rejecting oversized bodies. */
+/** 读取请求体为 UTF-8 文本，超过上限则拒绝。 */
 async function readBody(req: IncomingMessage, limit: number): Promise<string> {
   const chunks: Buffer[] = []
   let size = 0
@@ -56,7 +55,7 @@ async function readBody(req: IncomingMessage, limit: number): Promise<string> {
   return Buffer.concat(chunks).toString('utf8')
 }
 
-/** Plugin body: mount the manual-overlay read/write route. */
+/** 插件主体：挂载叠加层的读写路由。 */
 export function apply(ctx: GroupsContext): void {
   const manualPath = defaultManualPath()
 

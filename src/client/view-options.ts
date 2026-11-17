@@ -1,16 +1,15 @@
 /**
- * The "按虚拟分组" entry this plugin adds to the official view-options menu.
+ * 本插件往官方「视图选项」菜单里加的「按虚拟分组」一项。
  *
- * The official menu is cloned rather than rebuilt so its markup, classes and
- * check mark keep matching the DSH build it was rendered by. Selecting any
- * official grouping mode switches the layer back to official grouping.
+ * 官方菜单项是克隆而非重建的，这样它的标记、类名和勾选状态始终与当前 DSH
+ * 版本渲染出来的一致。选择任意官方分组方式都会让本层退回官方分组。
  */
 import { LAYER_ICON } from './ui.ts'
 
-/** What the menu needs from the layer that owns the view mode. */
+/** 菜单需要视图模式持有方提供的能力。 */
 export interface ViewOptionsHost {
   mode(): 'virtual' | 'official'
-  /** Switch mode; the layer persists it and re-renders. */
+  /** 切换模式；由层负责持久化并重新渲染。 */
   select(mode: 'virtual' | 'official'): void
 }
 
@@ -19,7 +18,7 @@ let lastSelectedExtra: string[] = []
 let lastCheckHTML: string | null = null
 const viewMenuMeta = new WeakMap<HTMLButtonElement, { baseClass: string; selectedExtra: string[]; check: string | null }>()
 
-/** Official grouping-mode icons; stable across UI locales. */
+/** 官方分组方式的图标；跨语言界面稳定。 */
 const GROUPING = {
   workspace: {
     icon: 'dsw-icon-folder-close-regular',
@@ -52,7 +51,7 @@ function groupingLabel(button: HTMLButtonElement): string {
 function isOfficialGroupingButton(button: HTMLButtonElement): boolean {
   const icon = groupingIcon(button)
   if (icon !== null && OFFICIAL_GROUPING_ICONS.has(icon)) return true
-  // Fallback for a DSH build that changes the icon names.
+  // 兜底：DSH 版本换了图标名时按文案匹配。
   return OFFICIAL_GROUPING_LABELS.has(groupingLabel(button))
 }
 
@@ -75,9 +74,9 @@ function virtualGroupingLabel(menu: HTMLElement): string {
 
 function findViewOptionsMenu(): HTMLElement | null {
   for (const menu of document.querySelectorAll<HTMLElement>('[role="menu"]')) {
-    // The CSS-module local name survives hashing and is language-independent.
+    // CSS module 的局部类名经过哈希后仍保留，且与界面语言无关。
     if (menu.className.includes('viewOptionsMenu')) return menu
-    // Fallback: a menu that contains an official grouping mode.
+    // 兜底：包含官方分组方式的菜单就是它。
     if ([...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')].some(isOfficialGroupingButton)) {
       return menu
     }
@@ -93,7 +92,7 @@ export function closeViewOptions(): void {
   else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
 }
 
-/** Add/refresh the "按虚拟分组" item inside the official view-options menu. */
+/** 在官方视图选项菜单里添加或刷新「按虚拟分组」这一项。 */
 export function ensureViewOptions(host: ViewOptionsHost): void {
   const menu = findViewOptionsMenu()
   if (menu === null) return
@@ -181,9 +180,8 @@ function activateVirtualMode(menu: HTMLElement, host: ViewOptionsHost): void {
     closeViewOptions()
     return
   }
-  // Selecting virtual grouping also normalizes the official mode to the flat
-  // "按工作区" list, otherwise the official tree nesting would fight the
-  // virtual sections. Suppress our own official-item listener for this click.
+  // 选择虚拟分组时顺便把官方模式归一到扁平的「按工作区」列表，否则官方树形
+  // 嵌套会和虚拟分区打架。这次点击要屏蔽我们自己挂的官方菜单项监听。
   suppressViewModeClick = true
   byWorkspace.click()
   window.setTimeout(() => {

@@ -1,10 +1,9 @@
 /**
- * Build the browser half as DSH's lazy-CJS module-loader artifact.
+ * 把浏览器侧打成 DSH 的 lazy-CJS 模块加载产物。
  *
- * The official client packages are built by tsdown; this repo keeps a tiny
- * esbuild pipeline so a checkout without the monorepo toolchain can rebuild
- * lib/client.js. Externals are exactly the shell's frozen platform-module
- * table rows this plugin consumes; every other local module is inlined.
+ * 官方客户端包用 tsdown 构建；本仓库保留一条极小的 esbuild 流水线，让没有
+ * 单体仓库工具链的检出也能重新生成 lib/client.js。external 恰好是外壳冻结的
+ * 平台模块表里本插件用到的那几行；其余本地模块一律内联。
  */
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
@@ -22,7 +21,7 @@ const CLIENT_EXTERNALS = [
   '@deepseek-ai/dsh-client-store',
 ]
 
-/** Resolve `./styles.css?inline` to a JS module exporting the CSS text. */
+/** 把 `./styles.css?inline` 解析成导出 CSS 文本的 JS 模块。 */
 const inlineCss = {
   name: 'inline-css',
   setup(build) {
