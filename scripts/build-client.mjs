@@ -46,6 +46,7 @@ await build({
   target: 'es2022',
   sourcemap: true,
   legalComments: 'none',
+  charset: 'utf8',
   jsx: 'automatic',
   external: CLIENT_EXTERNALS,
   plugins: [inlineCss],

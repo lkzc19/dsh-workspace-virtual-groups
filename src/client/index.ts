@@ -11,8 +11,8 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { mountWorkspaceVirtualGroups } from './dom-groups.ts'
 
-/** 必需服务：Workspace 控制器及其导航面。 */
-export const inject = ['workspaces', 'uiWorkspace']
+/** 必需服务：Workspace 控制器、导航面，以及界面文案的 locale 服务。 */
+export const inject = ['workspaces', 'uiWorkspace', 'locale']
 
 /** 挂载分组层，并随客户端 fiber 一同卸载。 */
 export function apply(ctx: ClientContext): void {

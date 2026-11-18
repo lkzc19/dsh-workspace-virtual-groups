@@ -4,6 +4,7 @@
  * 官方菜单项是克隆而非重建的，这样它的标记、类名和勾选状态始终与当前 DSH
  * 版本渲染出来的一致。选择任意官方分组方式都会让本层退回官方分组。
  */
+import { t as translate } from './i18n.ts'
 import { LAYER_ICON } from './ui.ts'
 
 /** 菜单需要视图模式持有方提供的能力。 */
@@ -66,10 +67,9 @@ function findGroupingButton(
     ?? null
 }
 
-function virtualGroupingLabel(menu: HTMLElement): string {
-  const workspace = findGroupingButton(menu, GROUPING.workspace)
-  const label = workspace === null ? '' : groupingLabel(workspace)
-  return label.includes('按') || label.includes('工作区') ? '按虚拟分组' : 'Virtual groups'
+/** 菜单项文案跟随 DSH 当前语言。 */
+function virtualGroupingLabel(): string {
+  return translate('viewMode.virtual')
 }
 
 function findViewOptionsMenu(): HTMLElement | null {
@@ -120,7 +120,7 @@ export function ensureViewOptions(host: ViewOptionsHost): void {
     button.className = baseClass
     const label = [...button.querySelectorAll(':scope > span')]
       .find((span) => span.querySelector('svg') === null && (span.textContent ?? '').trim() !== '')
-    if (label !== undefined) label.textContent = virtualGroupingLabel(menu)
+    if (label !== undefined) label.textContent = virtualGroupingLabel()
     const icon = button.querySelector<HTMLElement>('[class*="itemIcon"]')
       ?? [...button.querySelectorAll('span')].find((span) => span.querySelector('svg') !== null)
     if (icon !== undefined) icon.innerHTML = LAYER_ICON
@@ -137,6 +137,12 @@ export function ensureViewOptions(host: ViewOptionsHost): void {
       activateVirtualMode(menu, host)
     })
     ours = button
+  } else {
+    // 语言可能已经切换，刷新已存在条目的文案。
+    const current = [...ours.querySelectorAll(':scope > span')]
+      .find((span) => span.querySelector('svg') === null && (span.textContent ?? '').trim() !== '')
+    const text = virtualGroupingLabel()
+    if (current !== undefined && current.textContent !== text) current.textContent = text
   }
 
   if (menu.dataset.wvgModeListener !== '1') {

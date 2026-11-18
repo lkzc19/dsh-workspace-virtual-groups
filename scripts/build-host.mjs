@@ -20,5 +20,6 @@ await build({
   platform: 'node',
   target: 'es2022',
   legalComments: 'none',
+  charset: 'utf8',
   logLevel: 'info',
 })

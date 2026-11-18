@@ -25,6 +25,7 @@ import {
   type NormalizedManual,
 } from '../core/grouping.ts'
 import { applyVisibilityBatch, resetVisibility } from './collapse.ts'
+import { installMessages, t, type LocaleFace } from './i18n.ts'
 import { closeModal, openConfirmDialog, openNameDialog } from './dialogs.ts'
 import {
   ensureNewGroupButton,
@@ -66,7 +67,7 @@ async function putManual(manual: NormalizedManual): Promise<void> {
     body: JSON.stringify(manual),
   })
   if (response.ok) return
-  let message = `保存失败（${response.status}）`
+  let message = t('error.saveFailed', { status: String(response.status) })
   try {
     const text = await response.text()
     if (text !== '') message = text
@@ -105,11 +106,17 @@ export function mountWorkspaceVirtualGroups(ctx: {
     pickDirectory(): Promise<string | null>
     startSession(workspaceId?: string): void
   }
+  /** 界面文案跟随 DSH 当前语言。 */
+  locale: LocaleFace
 }): () => void {
   const style = document.createElement('style')
   style.dataset.plugin = 'dsh-workspace-virtual-groups'
   style.textContent = css
   document.head.append(style)
+
+  const disposeMessages = installMessages(ctx.locale)
+  // 切换语言后重渲染，让菜单、对话框和 aria 文案跟着变。
+  const disposeLocale = ctx.locale.subscribe(() => schedule())
 
   let disposed = false
   let manual: NormalizedManual = normalizeManual(undefined)
@@ -224,12 +231,17 @@ export function mountWorkspaceVirtualGroups(ctx: {
    * 新建分组。没有父级时落在顶层；给了父级就成为它的子分组，「默认」分组
    * 也包括在内。
    */
+  /** 分组的显示名：内置分组跟随语言，其余是用户起的名字。 */
+  function groupLabel(key: string): string {
+    return key === DEFAULT_GROUP ? t('group.default') : key
+  }
+
   function openCreateGroupDialog(parent: string | null = null): void {
     const parentKey = parent
-    openNameDialog(parentKey === null ? '新建分组' : '新建子分组', '', '创建', async (name) => {
+    openNameDialog(parentKey === null ? t('group.new') : t('group.newChild'), '', t('dialog.create'), async (name) => {
       const taken = takenCategoryNames(manual)
-      if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
-      if (taken.has(name)) return '已存在同名分组'
+      if (name === '' || name === DEFAULT_GROUP || name === groupLabel(DEFAULT_GROUP)) return t('error.nameUnusable')
+      if (taken.has(name)) return t('error.nameTaken')
       if (parentKey !== null && collapsed.delete(parentKey)) writeCollapsed(collapsed)
       await persist({
         ...manual,
@@ -248,11 +260,11 @@ export function mountWorkspaceVirtualGroups(ctx: {
     header.dataset.wvgDefault = key === DEFAULT_GROUP ? '1' : '0'
     header.setAttribute('role', 'treeitem')
     header.setAttribute('aria-expanded', 'true')
-    header.setAttribute('aria-label', key)
+    header.setAttribute('aria-label', groupLabel(key))
     header.draggable = key !== DEFAULT_GROUP
-    header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span><button type="button" class="wvg-more" aria-label="分组操作" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`
+    header.innerHTML = `<span class="wvg-chevron">${svgIcon('dsw-icon-triangle-right-fill-regular', 14)}</span><span class="wvg-label"></span><button type="button" class="wvg-more" aria-label="${t('group.moreLabel')}" aria-haspopup="menu">${svgIcon('dsw-icon-ellipsis-outline-regular', 16)}</button>`
     // 分组名是用户输入，绝不能拼进 innerHTML。
-    header.querySelector<HTMLElement>('.wvg-more')?.setAttribute('aria-label', `分组“${key}”的操作`)
+    header.querySelector<HTMLElement>('.wvg-more')?.setAttribute('aria-label', t('group.more', { name: groupLabel(key) }))
     header.addEventListener('dragstart', (event) => {
       if (key === DEFAULT_GROUP) {
         event.preventDefault()
@@ -392,7 +404,11 @@ export function mountWorkspaceVirtualGroups(ctx: {
         const expanded = collapsed.has(key) ? 'false' : 'true'
         if (header.getAttribute('aria-expanded') !== expanded) header.setAttribute('aria-expanded', expanded)
         const label = header.querySelector<HTMLElement>('.wvg-label')
-        if (label !== null && label.textContent !== key) label.textContent = key
+        const displayName = groupLabel(key)
+        if (label !== null && label.textContent !== displayName) label.textContent = displayName
+        const more = header.querySelector<HTMLElement>('.wvg-more')
+        const moreLabel = t('group.more', { name: displayName })
+        if (more !== null && more.getAttribute('aria-label') !== moreLabel) more.setAttribute('aria-label', moreLabel)
       },
       member: (section, groupKey, depth) => {
         setStyle(section, 'order', String(cursor++))
@@ -588,7 +604,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
 
   function requestDeleteGroup(key: string): void {
     const destination = groupParents(manual).get(key) ?? DEFAULT_GROUP
-    openConfirmDialog('删除分组', `删除后，该分组内的项目和子分组会移到「${destination}」。`, async () => {
+    openConfirmDialog(t('delete.title'), t('delete.message', { destination: groupLabel(destination) }), async () => {
       await deleteGroup(key)
     })
   }
@@ -596,29 +612,29 @@ export function mountWorkspaceVirtualGroups(ctx: {
   function openGroupMenu(key: string, anchor: HTMLElement, x: number, y: number): void {
     const entries: MenuEntry[] = [
       {
-        label: '添加工作区',
+        label: t('menu.addWorkspace'),
         icon: 'dsw-icon-project-add-outline-regular',
         onSelect: () => { void addWorkspaceToGroup(key) },
       },
-      { label: '添加分组', svg: LAYER_ICON, onSelect: () => { openCreateGroupDialog(key) } },
+      { label: t('menu.addGroup'), svg: LAYER_ICON, onSelect: () => { openCreateGroupDialog(key) } },
     ]
     // 「默认」分组可以放工作区和子分组，但不能重命名、删除或拖动，
     // 因此它的菜单只有两个添加类动作。
     if (key !== DEFAULT_GROUP) {
       entries.push(
-        { label: '重命名分组', icon: 'dsw-icon-edit-outline-regular', onSelect: () => { openRenameDialog(key) } },
+        { label: t('menu.rename'), icon: 'dsw-icon-edit-outline-regular', onSelect: () => { openRenameDialog(key) } },
         { separator: true },
-        { label: '删除分组', icon: 'dsw-icon-trash-outline-regular', danger: true, onSelect: () => { requestDeleteGroup(key) } },
+        { label: t('menu.delete'), icon: 'dsw-icon-trash-outline-regular', danger: true, onSelect: () => { requestDeleteGroup(key) } },
       )
     }
-    openMenu(anchor, `分组“${key}”的操作`, entries, x, y)
+    openMenu(anchor, t('group.more', { name: groupLabel(key) }), entries, x, y)
   }
 
   function openRenameDialog(key: string): void {
-    openNameDialog('重命名分组', key, '重命名', async (name) => {
-      if (name === '' || name === DEFAULT_GROUP) return '该名称不可用'
+    openNameDialog(t('menu.rename'), key, t('dialog.rename'), async (name) => {
+      if (name === '' || name === DEFAULT_GROUP || name === groupLabel(DEFAULT_GROUP)) return t('error.nameUnusable')
       if (name === key) return null
-      if (takenCategoryNames(manual).has(name)) return '已存在同名分组'
+      if (takenCategoryNames(manual).has(name)) return t('error.nameTaken')
       await renameGroup(key, name)
       return null
     })
@@ -664,7 +680,7 @@ export function mountWorkspaceVirtualGroups(ctx: {
     if (disposed) return
     loaded = false
     console.warn('workspace virtual groups: manual overlay unavailable:', reason)
-    showToast('分组数据加载失败，虚拟分组已暂时停用。请刷新重试。')
+    showToast(t('error.loadFailed'))
     schedule()
   })
 
@@ -707,6 +723,8 @@ export function mountWorkspaceVirtualGroups(ctx: {
     closeMenu()
     closeViewOptions()
     closeModal()
+    disposeLocale()
+    disposeMessages()
     cleanupList()
     removeNewGroupButtons()
     document.querySelectorAll('[data-wvg-view-wrap]').forEach((node) => node.remove())

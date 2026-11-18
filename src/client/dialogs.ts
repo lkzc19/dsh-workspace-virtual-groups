@@ -2,6 +2,7 @@
  * 模态对话框：一个共用的外壳（标题、正文、操作区，以及关闭/Esc/点遮罩的接线），
  * 加上本插件需要的两个对话框——给分组命名和确认删除。
  */
+import { t } from './i18n.ts'
 import { svgIcon } from './ui.ts'
 
 let modal: HTMLElement | null = null
@@ -19,7 +20,7 @@ function createDialog(title: string, bodyHTML: string, confirmLabel: string, con
   closeModal()
   const overlay = document.createElement('div')
   overlay.className = 'wvg-overlay'
-  overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="关闭">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body">${bodyHTML}<div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>取消</button><button type="button" class="wvg-button ${confirmClass}" data-wvg-ok></button></div></div>`
+  overlay.innerHTML = `<div class="wvg-dialog" role="dialog" aria-modal="true" tabindex="-1"><div class="wvg-dialog-content"><div class="wvg-dialog-header"><h2 class="wvg-dialog-title"></h2><button type="button" class="wvg-dialog-close" aria-label="${t('dialog.close')}">${svgIcon('dsw-icon-close-outline-regular', 14)}</button></div><div class="wvg-dialog-body">${bodyHTML}<div class="wvg-error" role="alert"></div></div></div><div class="wvg-dialog-actions"><button type="button" class="wvg-button wvg-outline" data-wvg-cancel>${t('dialog.cancel')}</button><button type="button" class="wvg-button ${confirmClass}" data-wvg-ok></button></div></div>`
   const dialog = overlay.querySelector<HTMLElement>('.wvg-dialog')!
   dialog.setAttribute('aria-label', title)
   dialog.querySelector<HTMLElement>('.wvg-dialog-title')!.textContent = title
@@ -51,7 +52,7 @@ export function openNameDialog(
 ): void {
   const { dialog, error, ok, close } = createDialog(
     title,
-    '<input class="wvg-input" type="text" maxlength="80" aria-label="分组名称" />',
+    `<input class="wvg-input" type="text" maxlength="80" aria-label="${t('dialog.nameLabel')}" />`,
     confirmLabel,
     'wvg-primary',
   )
@@ -103,7 +104,7 @@ export function openConfirmDialog(title: string, message: string, confirm: () =>
   const { dialog, error, ok, close } = createDialog(
     title,
     '<div class="wvg-dialog-message"></div>',
-    '删除',
+    t('dialog.delete'),
     'wvg-danger',
   )
   dialog.querySelector<HTMLElement>('.wvg-dialog-message')!.textContent = message

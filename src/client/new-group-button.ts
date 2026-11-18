@@ -4,6 +4,7 @@
  * 官方的 header-actions 容器按两个 28px 按钮定宽并裁剪溢出，加第三个按钮就得
  * 把容器撑开——按钮消失时再把原始尺寸还原。
  */
+import { t } from './i18n.ts'
 import { LAYER_ICON, setStyle } from './ui.ts'
 
 export interface NewGroupButtonHost {
@@ -64,7 +65,8 @@ export function ensureNewGroupButton(host: NewGroupButtonHost): void {
     add.after(button)
   }
   if (button.previousElementSibling !== add) add.after(button)
-  if (button.getAttribute('aria-label') !== '新建分组') button.setAttribute('aria-label', '新建分组')
+  const label = t('group.new')
+  if (button.getAttribute('aria-label') !== label) button.setAttribute('aria-label', label)
   button.removeAttribute('aria-keyshortcuts')
   button.removeAttribute('aria-expanded')
   if (button.querySelector('svg[data-wvg-layer="1"]') === null) button.innerHTML = LAYER_ICON
