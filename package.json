@@ -1,6 +1,6 @@
 {
   "name": "@lkzc19/dsh-workspace-virtual-groups",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Virtual workspace groups for the DSH web sidebar: a built-in default group, group create/rename/delete, drag-and-drop project grouping and ordering.",
   "keywords": [
     "dsh",
